@@ -6,6 +6,7 @@ import (
 	authHdl "github.com/prast13/bayaraman/internal/handler/auth"
 	escrowHdl "github.com/prast13/bayaraman/internal/handler/escrow"
 	userHdl "github.com/prast13/bayaraman/internal/handler/user"
+	walletHdl "github.com/prast13/bayaraman/internal/handler/wallet"
 	webhookHdl "github.com/prast13/bayaraman/internal/handler/webhook"
 
 	"github.com/labstack/echo/v4"
@@ -21,6 +22,7 @@ type RouterParams struct {
 	UserHandler    *userHdl.UserHandler
 	WebhookHandler *webhookHdl.WebhookHandler
 	EscrowHandler  *escrowHdl.EscrowHandler
+	WalletHandler  *walletHdl.WalletHandler
 }
 
 func SetupRoutes(p RouterParams) {
@@ -68,5 +70,13 @@ func SetupRoutes(p RouterParams) {
 		escrowGroup.POST("/:id/videos/unboxing", p.EscrowHandler.UploadUnboxingVideo)
 		escrowGroup.POST("/:id/photos/packing", p.EscrowHandler.UploadPackingPhoto)
 		escrowGroup.POST("/:id/photos/unboxing", p.EscrowHandler.UploadUnboxingPhoto)
+		escrowGroup.POST("/:id/receipt", p.EscrowHandler.UploadReceipt)
+		escrowGroup.POST("/:id/deliver", p.EscrowHandler.DeliverEscrow)
+
+		// Wallet Routes (Protected)
+		walletGroup := api.Group("/wallets")
+		walletGroup.Use(authMiddleware.RequireAuth(p.Config.JWTSecret))
+		walletGroup.GET("/me", p.WalletHandler.GetMyWallet)
+		walletGroup.POST("/withdraw", p.WalletHandler.Withdraw)
 	}
 }

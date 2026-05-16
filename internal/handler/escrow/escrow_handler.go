@@ -223,3 +223,56 @@ func (h *EscrowHandler) MyEscrows(c echo.Context) error {
 		"data": escrows,
 	})
 }
+
+func (h *EscrowHandler) UploadReceipt(c echo.Context) error {
+	escrowIDStr := c.Param("id")
+	escrowID, err := uuid.Parse(escrowIDStr)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid escrow ID"})
+	}
+
+	sellerID, ok := c.Get("user_id").(uuid.UUID)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+	}
+
+	trackingNumber := c.FormValue("tracking_number")
+	courier := c.FormValue("courier")
+	if trackingNumber == "" || courier == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "tracking_number and courier are required"})
+	}
+
+	file, err := c.FormFile("receipt")
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "receipt photo is required"})
+	}
+
+	url, err := h.escrowService.UploadReceipt(c.Request().Context(), escrowID, sellerID, trackingNumber, courier, file)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"message": "Receipt uploaded and status changed to shipped",
+		"url":     url,
+	})
+}
+
+func (h *EscrowHandler) DeliverEscrow(c echo.Context) error {
+	escrowIDStr := c.Param("id")
+	escrowID, err := uuid.Parse(escrowIDStr)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid escrow ID"})
+	}
+
+	buyerID, ok := c.Get("user_id").(uuid.UUID)
+	if !ok {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+	}
+
+	if err := h.escrowService.DeliverEscrow(c.Request().Context(), escrowID, buyerID); err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Escrow marked as delivered"})
+}

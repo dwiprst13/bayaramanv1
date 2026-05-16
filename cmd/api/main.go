@@ -6,12 +6,14 @@ import (
 	authHdl "github.com/prast13/bayaraman/internal/handler/auth"
 	escrowHdl "github.com/prast13/bayaraman/internal/handler/escrow"
 	userHdl "github.com/prast13/bayaraman/internal/handler/user"
+	walletHdl "github.com/prast13/bayaraman/internal/handler/wallet"
 	webhookHdl "github.com/prast13/bayaraman/internal/handler/webhook"
 	auditLogRepo "github.com/prast13/bayaraman/internal/repository/auditlog"
 	escrowRepo "github.com/prast13/bayaraman/internal/repository/escrow"
 	paymentRepo "github.com/prast13/bayaraman/internal/repository/payment"
 	sessionRepo "github.com/prast13/bayaraman/internal/repository/session"
 	userRepo "github.com/prast13/bayaraman/internal/repository/user"
+	walletRepo "github.com/prast13/bayaraman/internal/repository/wallet"
 	authSvc "github.com/prast13/bayaraman/internal/service/auth"
 	emailSvc "github.com/prast13/bayaraman/internal/service/email"
 	escrowSvc "github.com/prast13/bayaraman/internal/service/escrow"
@@ -19,6 +21,7 @@ import (
 	paymentSvc "github.com/prast13/bayaraman/internal/service/payment"
 	rateLimiterSvc "github.com/prast13/bayaraman/internal/service/ratelimiter"
 	storageSvc "github.com/prast13/bayaraman/internal/service/storage"
+	walletSvc "github.com/prast13/bayaraman/internal/service/wallet"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -53,6 +56,7 @@ func main() {
 	auditLogRepo := auditLogRepo.NewAuditLogRepository(db)
 	escrowRepo := escrowRepo.NewEscrowRepository(db)
 	paymentRepo := paymentRepo.NewPaymentRepository(db)
+	walletRepo := walletRepo.NewWalletRepository(db)
 
 	// Services
 	emailService := emailSvc.NewEmailService()
@@ -68,13 +72,15 @@ func main() {
 	otpService := otpSvc.NewOTPService(redisClient, emailService, rateLimiterService)
 	authService := authSvc.NewAuthService(userRepo, sessionRepo, auditLogRepo, otpService, redisClient)
 	paymentService := paymentSvc.NewPaymentService(paymentRepo, escrowRepo, auditLogRepo, cfg.XenditAPIKey)
-	escrowService := escrowSvc.NewEscrowService(escrowRepo, paymentService, auditLogRepo, storageService)
+	walletService := walletSvc.NewWalletService(walletRepo)
+	escrowService := escrowSvc.NewEscrowService(escrowRepo, paymentService, auditLogRepo, storageService, walletService)
 
 	// Handlers
 	authHandler := authHdl.NewAuthHandler(authService, cfg.JWTSecret)
 	webhookHandler := webhookHdl.NewWebhookHandler(userRepo, paymentService, cfg.PrivyWebhookSecret, cfg.XenditWebhookToken)
 	userHandler := userHdl.NewUserHandler()
 	escrowHandler := escrowHdl.NewEscrowHandler(escrowService)
+	walletHandler := walletHdl.NewWalletHandler(walletService)
 
 	// Setup Echo
 	e := echo.New()
@@ -92,6 +98,7 @@ func main() {
 		UserHandler:    userHandler,
 		WebhookHandler: webhookHandler,
 		EscrowHandler:  escrowHandler,
+		WalletHandler:  walletHandler,
 	})
 
 	// Start Background Worker

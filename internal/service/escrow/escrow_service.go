@@ -15,6 +15,7 @@ import (
 	escrowRepo "github.com/prast13/bayaraman/internal/repository/escrow"
 	paymentSvc "github.com/prast13/bayaraman/internal/service/payment"
 	storageSvc "github.com/prast13/bayaraman/internal/service/storage"
+	walletSvc "github.com/prast13/bayaraman/internal/service/wallet"
 )
 
 type CreateEscrowRequest struct {
@@ -42,14 +43,16 @@ type escrowService struct {
 	paymentSvc   paymentSvc.PaymentService
 	auditLogRepo auditLogRepo.AuditLogRepository
 	storageSvc   storageSvc.StorageService
+	walletSvc    walletSvc.WalletService
 }
 
-func NewEscrowService(escrowRepo escrowRepo.EscrowRepository, paymentSvc paymentSvc.PaymentService, auditLogRepo auditLogRepo.AuditLogRepository, storageSvc storageSvc.StorageService) EscrowService {
+func NewEscrowService(escrowRepo escrowRepo.EscrowRepository, paymentSvc paymentSvc.PaymentService, auditLogRepo auditLogRepo.AuditLogRepository, storageSvc storageSvc.StorageService, walletSvc walletSvc.WalletService) EscrowService {
 	return &escrowService{
 		escrowRepo:   escrowRepo,
 		paymentSvc:   paymentSvc,
 		auditLogRepo: auditLogRepo,
 		storageSvc:   storageSvc,
+		walletSvc:    walletSvc,
 	}
 }
 
@@ -142,7 +145,14 @@ func (s *escrowService) CompleteEscrow(ctx context.Context, escrowID uuid.UUID, 
 		Action: "ESCROW_COMPLETED",
 	})
 
-	log.Printf("[STUB DISBURSEMENT] Payout %.2f to Seller %s\n", escrow.Amount, escrow.SellerID.String())
+	// Credit wallet to seller
+	amountToCredit := escrow.Amount // Without fee. Fee belongs to platform.
+	err = s.walletSvc.CreditWallet(ctx, escrow.SellerID, amountToCredit, "Escrow payout for "+escrow.Title, escrow.ID.String())
+	if err != nil {
+		log.Printf("[CRITICAL] Failed to credit wallet for escrow %s to user %s: %v", escrow.ID, escrow.SellerID, err)
+	}
+
+	log.Printf("[WALLET LEDGER] Credited %.2f to Seller %s Wallet\n", amountToCredit, escrow.SellerID.String())
 
 	return nil
 }

@@ -26,6 +26,9 @@ func main() {
 		&model.AuditLog{},
 		&model.EscrowTransaction{},
 		&model.Payment{},
+		&model.Wallet{},
+		&model.WalletTransaction{},
+		&model.Payout{},
 	)
 
 	if err != nil {
