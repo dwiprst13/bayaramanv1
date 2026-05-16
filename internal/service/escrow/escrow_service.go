@@ -33,6 +33,8 @@ type EscrowService interface {
 	UploadUnboxingVideo(ctx context.Context, escrowID uuid.UUID, buyerID uuid.UUID, file *multipart.FileHeader) (string, error)
 	UploadPackingPhoto(ctx context.Context, escrowID uuid.UUID, sellerID uuid.UUID, files []*multipart.FileHeader) ([]string, error)
 	UploadUnboxingPhoto(ctx context.Context, escrowID uuid.UUID, buyerID uuid.UUID, files []*multipart.FileHeader) ([]string, error)
+	UploadReceipt(ctx context.Context, escrowID uuid.UUID, sellerID uuid.UUID, trackingNumber string, courier string, file *multipart.FileHeader) (string, error)
+	DeliverEscrow(ctx context.Context, escrowID uuid.UUID, buyerID uuid.UUID) error
 }
 
 type escrowService struct {
@@ -69,7 +71,7 @@ func (s *escrowService) CreateEscrow(ctx context.Context, buyerID uuid.UUID, req
 		Description: req.Description,
 		Amount:      req.Amount,
 		Fee:         fee,
-		Status:      "created",
+		Status:      "pending",
 	}
 
 	err := s.escrowRepo.Create(ctx, escrow)
@@ -95,8 +97,8 @@ func (s *escrowService) FundEscrow(ctx context.Context, escrowID uuid.UUID, buye
 		return nil, "", errors.New("unauthorized")
 	}
 
-	if escrow.Status != "created" {
-		return nil, "", errors.New("escrow cannot be funded at this status")
+	if err := model.ValidateTransition(escrow.Status, "funded"); err != nil {
+		return nil, "", err
 	}
 
 	payment, url, err := s.paymentSvc.CreateInvoice(ctx, escrow)
@@ -125,8 +127,8 @@ func (s *escrowService) CompleteEscrow(ctx context.Context, escrowID uuid.UUID, 
 		return errors.New("unauthorized")
 	}
 
-	if escrow.Status != "funded" && escrow.Status != "in_progress" {
-		return errors.New("escrow is not funded yet")
+	if err := model.ValidateTransition(escrow.Status, "completed"); err != nil {
+		return err
 	}
 
 	escrow.Status = "completed"
@@ -166,9 +168,6 @@ func (s *escrowService) UploadPackingVideo(ctx context.Context, escrowID uuid.UU
 	}
 
 	escrow.PackingVideoURL = url
-	if escrow.Status == "funded" {
-		escrow.Status = "in_progress"
-	}
 	
 	if err := s.escrowRepo.Update(ctx, escrow); err != nil {
 		return "", err
@@ -249,9 +248,6 @@ func (s *escrowService) UploadPackingPhoto(ctx context.Context, escrowID uuid.UU
 	}
 
 	escrow.PackingPhotoURLs = append(escrow.PackingPhotoURLs, urls...)
-	if escrow.Status == "funded" {
-		escrow.Status = "in_progress"
-	}
 	
 	if err := s.escrowRepo.Update(ctx, escrow); err != nil {
 		return nil, err
@@ -309,4 +305,68 @@ func (s *escrowService) UploadUnboxingPhoto(ctx context.Context, escrowID uuid.U
 	})
 
 	return urls, nil
+}
+
+func (s *escrowService) UploadReceipt(ctx context.Context, escrowID uuid.UUID, sellerID uuid.UUID, trackingNumber string, courier string, file *multipart.FileHeader) (string, error) {
+	escrow, err := s.escrowRepo.FindByID(ctx, escrowID)
+	if err != nil {
+		return "", errors.New("escrow not found")
+	}
+
+	if escrow.SellerID != sellerID {
+		return "", errors.New("unauthorized")
+	}
+
+	if err := model.ValidateTransition(escrow.Status, "shipped"); err != nil {
+		return "", err
+	}
+
+	filename := fmt.Sprintf("receipt_%s_%s%s", escrow.ID.String(), time.Now().Format("20060102150405"), filepath.Ext(file.Filename))
+	url, err := s.storageSvc.UploadFile(ctx, file, "photos", filename)
+	if err != nil {
+		return "", err
+	}
+
+	escrow.ReceiptPhotoURL = url
+	escrow.TrackingNumber = trackingNumber
+	escrow.Courier = courier
+	escrow.Status = "shipped"
+
+	if err := s.escrowRepo.Update(ctx, escrow); err != nil {
+		return "", err
+	}
+
+	s.auditLogRepo.Create(ctx, &model.AuditLog{
+		UserID: sellerID,
+		Action: "UPLOAD_RECEIPT",
+	})
+
+	return url, nil
+}
+
+func (s *escrowService) DeliverEscrow(ctx context.Context, escrowID uuid.UUID, buyerID uuid.UUID) error {
+	escrow, err := s.escrowRepo.FindByID(ctx, escrowID)
+	if err != nil {
+		return errors.New("escrow not found")
+	}
+
+	if escrow.BuyerID != buyerID {
+		return errors.New("unauthorized")
+	}
+
+	if err := model.ValidateTransition(escrow.Status, "delivered"); err != nil {
+		return err
+	}
+
+	escrow.Status = "delivered"
+	if err := s.escrowRepo.Update(ctx, escrow); err != nil {
+		return err
+	}
+
+	s.auditLogRepo.Create(ctx, &model.AuditLog{
+		UserID: buyerID,
+		Action: "ESCROW_DELIVERED",
+	})
+
+	return nil
 }

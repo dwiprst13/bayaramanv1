@@ -89,13 +89,17 @@ func (s *paymentService) ProcessWebhook(ctx context.Context, payload map[string]
 
 		escrow, err := s.escrowRepo.FindByID(ctx, payment.EscrowTransactionID)
 		if err == nil {
-			escrow.Status = "funded"
-			s.escrowRepo.Update(ctx, escrow)
+			if err := model.ValidateTransition(escrow.Status, "funded"); err == nil {
+				escrow.Status = "funded"
+				s.escrowRepo.Update(ctx, escrow)
 
-			s.auditLogRepo.Create(ctx, &model.AuditLog{
-				UserID: escrow.BuyerID,
-				Action: "ESCROW_FUNDED",
-			})
+				s.auditLogRepo.Create(ctx, &model.AuditLog{
+					UserID: escrow.BuyerID,
+					Action: "ESCROW_FUNDED",
+				})
+			} else {
+				log.Printf("Failed to transition escrow %s to funded: %v\n", escrow.ID, err)
+			}
 		}
 	} else if status == "EXPIRED" {
 		payment.Status = "expired"
