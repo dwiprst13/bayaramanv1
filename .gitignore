@@ -1,2 +1,7 @@
+# Ignore the api folder at repository root
 /.env
 /implementation_plan.md
+/api
+/migrate
+/seed
+/.vscode
