@@ -1,0 +1,30 @@
+package model
+
+import (
+	"time"
+
+	"github.com/google/uuid"
+	"gorm.io/gorm"
+)
+
+type EscrowTransaction struct {
+	ID          uuid.UUID `gorm:"type:uuid;primary_key;" json:"id"`
+	BuyerID     uuid.UUID `gorm:"type:uuid;not null" json:"buyer_id"`
+	SellerID    uuid.UUID `gorm:"type:uuid;not null" json:"seller_id"`
+	Title       string    `gorm:"not null" json:"title"`
+	Description string    `gorm:"type:text" json:"description"`
+	Amount      float64   `gorm:"type:decimal(15,2);not null" json:"amount"`
+	Fee         float64   `gorm:"type:decimal(15,2);not null" json:"fee"`
+	Status      string    `gorm:"type:varchar(20);default:'created'" json:"status"` // created, accepted, funded, in_progress, completed, disputed, cancelled
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+
+	Buyer  User `gorm:"foreignKey:BuyerID" json:"buyer"`
+	Seller User `gorm:"foreignKey:SellerID" json:"seller"`
+}
+
+func (e *EscrowTransaction) BeforeCreate(tx *gorm.DB) (err error) {
+	e.ID = uuid.New()
+	return
+}
+ 
