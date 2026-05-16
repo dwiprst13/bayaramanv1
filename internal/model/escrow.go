@@ -27,4 +27,3 @@ func (e *EscrowTransaction) BeforeCreate(tx *gorm.DB) (err error) {
 	e.ID = uuid.New()
 	return
 }
- 

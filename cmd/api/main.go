@@ -3,13 +3,27 @@ package main
 import (
 	"log"
 
+	authHdl "github.com/prast13/bayaraman/internal/handler/auth"
+	escrowHdl "github.com/prast13/bayaraman/internal/handler/escrow"
+	userHdl "github.com/prast13/bayaraman/internal/handler/user"
+	webhookHdl "github.com/prast13/bayaraman/internal/handler/webhook"
+	auditLogRepo "github.com/prast13/bayaraman/internal/repository/auditlog"
+	escrowRepo "github.com/prast13/bayaraman/internal/repository/escrow"
+	paymentRepo "github.com/prast13/bayaraman/internal/repository/payment"
+	sessionRepo "github.com/prast13/bayaraman/internal/repository/session"
+	userRepo "github.com/prast13/bayaraman/internal/repository/user"
+	authSvc "github.com/prast13/bayaraman/internal/service/auth"
+	emailSvc "github.com/prast13/bayaraman/internal/service/email"
+	escrowSvc "github.com/prast13/bayaraman/internal/service/escrow"
+	otpSvc "github.com/prast13/bayaraman/internal/service/otp"
+	paymentSvc "github.com/prast13/bayaraman/internal/service/payment"
+	rateLimiterSvc "github.com/prast13/bayaraman/internal/service/ratelimiter"
+
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/prast13/bayaraman/config"
-	"github.com/prast13/bayaraman/internal/handler"
-	"github.com/prast13/bayaraman/internal/repository"
+
 	"github.com/prast13/bayaraman/internal/router"
-	"github.com/prast13/bayaraman/internal/service"
 )
 
 func main() {
@@ -33,19 +47,25 @@ func main() {
 	_ = redisClient
 
 	// Repositories
-	userRepo := repository.NewUserRepository(db)
-	sessionRepo := repository.NewSessionRepository(db)
-	auditLogRepo := repository.NewAuditLogRepository(db)
+	userRepo := userRepo.NewUserRepository(db)
+	sessionRepo := sessionRepo.NewSessionRepository(db)
+	auditLogRepo := auditLogRepo.NewAuditLogRepository(db)
+	escrowRepo := escrowRepo.NewEscrowRepository(db)
+	paymentRepo := paymentRepo.NewPaymentRepository(db)
 
 	// Services
-	emailService := service.NewEmailService()
-	otpService := service.NewOTPService(redisClient, emailService)
-	authService := service.NewAuthService(userRepo, sessionRepo, auditLogRepo, otpService, redisClient)
+	emailService := emailSvc.NewEmailService()
+	rateLimiterService := rateLimiterSvc.NewRateLimiterService(redisClient)
+	otpService := otpSvc.NewOTPService(redisClient, emailService, rateLimiterService)
+	authService := authSvc.NewAuthService(userRepo, sessionRepo, auditLogRepo, otpService, redisClient)
+	paymentService := paymentSvc.NewPaymentService(paymentRepo, escrowRepo, auditLogRepo, cfg.XenditAPIKey)
+	escrowService := escrowSvc.NewEscrowService(escrowRepo, paymentService, auditLogRepo)
 
 	// Handlers
-	authHandler := handler.NewAuthHandler(authService, cfg.JWTSecret)
-	webhookHandler := handler.NewWebhookHandler(userRepo, cfg.PrivyWebhookSecret)
-	userHandler := handler.NewUserHandler()
+	authHandler := authHdl.NewAuthHandler(authService, cfg.JWTSecret)
+	webhookHandler := webhookHdl.NewWebhookHandler(userRepo, paymentService, cfg.PrivyWebhookSecret, cfg.XenditWebhookToken)
+	userHandler := userHdl.NewUserHandler()
+	escrowHandler := escrowHdl.NewEscrowHandler(escrowService)
 
 	// Setup Echo
 	e := echo.New()
@@ -62,6 +82,7 @@ func main() {
 		AuthHandler:    authHandler,
 		UserHandler:    userHandler,
 		WebhookHandler: webhookHandler,
+		EscrowHandler:  escrowHandler,
 	})
 
 	// Start server

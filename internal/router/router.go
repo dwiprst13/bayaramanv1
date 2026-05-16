@@ -3,18 +3,24 @@ package router
 import (
 	"net/http"
 
+	authHdl "github.com/prast13/bayaraman/internal/handler/auth"
+	escrowHdl "github.com/prast13/bayaraman/internal/handler/escrow"
+	userHdl "github.com/prast13/bayaraman/internal/handler/user"
+	webhookHdl "github.com/prast13/bayaraman/internal/handler/webhook"
+
 	"github.com/labstack/echo/v4"
 	"github.com/prast13/bayaraman/config"
-	"github.com/prast13/bayaraman/internal/handler"
+
 	authMiddleware "github.com/prast13/bayaraman/internal/middleware"
 )
 
 type RouterParams struct {
 	Echo           *echo.Echo
 	Config         *config.Config
-	AuthHandler    *handler.AuthHandler
-	UserHandler    *handler.UserHandler
-	WebhookHandler *handler.WebhookHandler
+	AuthHandler    *authHdl.AuthHandler
+	UserHandler    *userHdl.UserHandler
+	WebhookHandler *webhookHdl.WebhookHandler
+	EscrowHandler  *escrowHdl.EscrowHandler
 }
 
 func SetupRoutes(p RouterParams) {
@@ -30,6 +36,7 @@ func SetupRoutes(p RouterParams) {
 	webhooks := e.Group("/webhooks")
 	{
 		webhooks.POST("/privy", p.WebhookHandler.PrivyWebhook)
+		webhooks.POST("/xendit", p.WebhookHandler.XenditWebhook)
 	}
 
 	api := e.Group("/api/v1")
@@ -46,5 +53,13 @@ func SetupRoutes(p RouterParams) {
 		user := api.Group("/user")
 		user.Use(authMiddleware.RequireAuth(p.Config.JWTSecret))
 		user.POST("/kyc/initiate", p.UserHandler.InitiateKYC)
+
+		// Escrow Routes (Protected)
+		escrow := api.Group("/escrows")
+		escrow.Use(authMiddleware.RequireAuth(p.Config.JWTSecret))
+		escrow.POST("", p.EscrowHandler.Create)
+		escrow.GET("", p.EscrowHandler.MyEscrows)
+		escrow.POST("/:id/fund", p.EscrowHandler.Fund)
+		escrow.POST("/:id/complete", p.EscrowHandler.Complete)
 	}
 }

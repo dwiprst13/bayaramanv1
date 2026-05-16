@@ -31,7 +31,7 @@ func RequireAuth(jwtSecret string) echo.MiddlewareFunc {
 			// Inject user info to context
 			c.Set("user_id", claims.UserID)
 			c.Set("role", claims.Role)
-			
+
 			return next(c)
 		}
 	}
