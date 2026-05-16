@@ -17,6 +17,7 @@ type User struct {
 	IsPhoneVerified bool      `gorm:"default:false" json:"is_phone_verified"`
 	KYCStatus       string    `gorm:"type:varchar(20);default:'pending'" json:"kyc_status"` // pending, verified, rejected
 	PrivyID         *string   `json:"privy_id"`
+	Status          string    `gorm:"type:varchar(20);default:'active'" json:"status"` // active, suspended
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }

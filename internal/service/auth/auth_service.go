@@ -31,6 +31,7 @@ type LoginRequest struct {
 	Password  string `json:"password"`
 	IPAddress string `json:"-"`
 	UserAgent string `json:"-"`
+	DeviceID  string `json:"device_id"`
 }
 
 type LoginResponse struct {
@@ -137,6 +138,7 @@ func (s *authService) Login(ctx context.Context, req LoginRequest, jwtSecret str
 		RefreshToken: refreshToken,
 		IPAddress:    req.IPAddress,
 		UserAgent:    req.UserAgent,
+		DeviceID:     req.DeviceID,
 		ExpiresAt:    time.Now().Add(7 * 24 * time.Hour), // 7 days
 	}
 	err = s.sessionRepo.Create(ctx, session)

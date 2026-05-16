@@ -3,18 +3,24 @@ package main
 import (
 	"log"
 
+	adminHdl "github.com/prast13/bayaraman/internal/handler/admin"
 	authHdl "github.com/prast13/bayaraman/internal/handler/auth"
+	chatHdl "github.com/prast13/bayaraman/internal/handler/chat"
 	escrowHdl "github.com/prast13/bayaraman/internal/handler/escrow"
 	userHdl "github.com/prast13/bayaraman/internal/handler/user"
 	walletHdl "github.com/prast13/bayaraman/internal/handler/wallet"
 	webhookHdl "github.com/prast13/bayaraman/internal/handler/webhook"
 	auditLogRepo "github.com/prast13/bayaraman/internal/repository/auditlog"
+	chatRepo "github.com/prast13/bayaraman/internal/repository/chat"
 	escrowRepo "github.com/prast13/bayaraman/internal/repository/escrow"
 	paymentRepo "github.com/prast13/bayaraman/internal/repository/payment"
 	sessionRepo "github.com/prast13/bayaraman/internal/repository/session"
 	userRepo "github.com/prast13/bayaraman/internal/repository/user"
 	walletRepo "github.com/prast13/bayaraman/internal/repository/wallet"
+	adminSvc "github.com/prast13/bayaraman/internal/service/admin"
 	authSvc "github.com/prast13/bayaraman/internal/service/auth"
+	chatSvc "github.com/prast13/bayaraman/internal/service/chat"
+	configSvc "github.com/prast13/bayaraman/internal/service/config"
 	emailSvc "github.com/prast13/bayaraman/internal/service/email"
 	escrowSvc "github.com/prast13/bayaraman/internal/service/escrow"
 	otpSvc "github.com/prast13/bayaraman/internal/service/otp"
@@ -57,6 +63,7 @@ func main() {
 	escrowRepo := escrowRepo.NewEscrowRepository(db)
 	paymentRepo := paymentRepo.NewPaymentRepository(db)
 	walletRepo := walletRepo.NewWalletRepository(db)
+	chatRepo := chatRepo.NewChatRepository(db)
 
 	// Services
 	emailService := emailSvc.NewEmailService()
@@ -73,7 +80,12 @@ func main() {
 	authService := authSvc.NewAuthService(userRepo, sessionRepo, auditLogRepo, otpService, redisClient)
 	paymentService := paymentSvc.NewPaymentService(paymentRepo, escrowRepo, auditLogRepo, cfg.XenditAPIKey)
 	walletService := walletSvc.NewWalletService(walletRepo)
-	escrowService := escrowSvc.NewEscrowService(escrowRepo, paymentService, auditLogRepo, storageService, walletService)
+	configService := configSvc.NewConfigService(redisClient)
+	escrowService := escrowSvc.NewEscrowService(escrowRepo, paymentService, auditLogRepo, storageService, walletService, configService)
+	adminService := adminSvc.NewAdminService(userRepo, escrowRepo, auditLogRepo, walletService)
+	
+	chatHub := chatSvc.NewHub()
+	chatService := chatSvc.NewChatService(chatRepo, escrowRepo, chatHub)
 
 	// Handlers
 	authHandler := authHdl.NewAuthHandler(authService, cfg.JWTSecret)
@@ -81,6 +93,8 @@ func main() {
 	userHandler := userHdl.NewUserHandler()
 	escrowHandler := escrowHdl.NewEscrowHandler(escrowService)
 	walletHandler := walletHdl.NewWalletHandler(walletService)
+	adminHandler := adminHdl.NewAdminHandler(adminService, configService)
+	chatHandler := chatHdl.NewChatHandler(chatService, storageService, cfg.JWTSecret)
 
 	// Setup Echo
 	e := echo.New()
@@ -99,10 +113,14 @@ func main() {
 		WebhookHandler: webhookHandler,
 		EscrowHandler:  escrowHandler,
 		WalletHandler:  walletHandler,
+		AdminHandler:   adminHandler,
+		ChatHandler:    chatHandler,
+		RedisClient:    redisClient,
 	})
 
 	// Start Background Worker
 	go worker.StartVideoCleanupWorker(db, storageService)
+	go worker.StartReconciliationWorker(db)
 
 	// Start server
 	port := cfg.Port

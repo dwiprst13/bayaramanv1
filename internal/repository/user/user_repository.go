@@ -12,6 +12,7 @@ type UserRepository interface {
 	Create(ctx context.Context, user *model.User) error
 	FindByID(ctx context.Context, id uuid.UUID) (*model.User, error)
 	FindByEmail(ctx context.Context, email string) (*model.User, error)
+	FindAll(ctx context.Context) ([]model.User, error)
 	Update(ctx context.Context, user *model.User) error
 }
 
@@ -47,4 +48,10 @@ func (r *userRepository) FindByEmail(ctx context.Context, email string) (*model.
 
 func (r *userRepository) Update(ctx context.Context, user *model.User) error {
 	return r.db.WithContext(ctx).Save(user).Error
+}
+
+func (r *userRepository) FindAll(ctx context.Context) ([]model.User, error) {
+	var users []model.User
+	err := r.db.WithContext(ctx).Order("created_at desc").Find(&users).Error
+	return users, err
 }

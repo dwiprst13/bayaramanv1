@@ -13,6 +13,7 @@ import (
 	"github.com/prast13/bayaraman/internal/model"
 	auditLogRepo "github.com/prast13/bayaraman/internal/repository/auditlog"
 	escrowRepo "github.com/prast13/bayaraman/internal/repository/escrow"
+	configSvc "github.com/prast13/bayaraman/internal/service/config"
 	paymentSvc "github.com/prast13/bayaraman/internal/service/payment"
 	storageSvc "github.com/prast13/bayaraman/internal/service/storage"
 	walletSvc "github.com/prast13/bayaraman/internal/service/wallet"
@@ -44,15 +45,17 @@ type escrowService struct {
 	auditLogRepo auditLogRepo.AuditLogRepository
 	storageSvc   storageSvc.StorageService
 	walletSvc    walletSvc.WalletService
+	configSvc    configSvc.ConfigService
 }
 
-func NewEscrowService(escrowRepo escrowRepo.EscrowRepository, paymentSvc paymentSvc.PaymentService, auditLogRepo auditLogRepo.AuditLogRepository, storageSvc storageSvc.StorageService, walletSvc walletSvc.WalletService) EscrowService {
+func NewEscrowService(escrowRepo escrowRepo.EscrowRepository, paymentSvc paymentSvc.PaymentService, auditLogRepo auditLogRepo.AuditLogRepository, storageSvc storageSvc.StorageService, walletSvc walletSvc.WalletService, configSvc configSvc.ConfigService) EscrowService {
 	return &escrowService{
 		escrowRepo:   escrowRepo,
 		paymentSvc:   paymentSvc,
 		auditLogRepo: auditLogRepo,
 		storageSvc:   storageSvc,
 		walletSvc:    walletSvc,
+		configSvc:    configSvc,
 	}
 }
 
@@ -65,7 +68,8 @@ func (s *escrowService) CreateEscrow(ctx context.Context, buyerID uuid.UUID, req
 		return nil, errors.New("amount must be greater than zero")
 	}
 
-	fee := req.Amount * 0.05 
+	feePercent := s.configSvc.GetPlatformFeePercent(ctx)
+	fee := req.Amount * (feePercent / 100.0) 
 
 	escrow := &model.EscrowTransaction{
 		BuyerID:     buyerID,

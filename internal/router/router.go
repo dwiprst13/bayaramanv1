@@ -3,7 +3,9 @@ package router
 import (
 	"net/http"
 
+	adminHdl "github.com/prast13/bayaraman/internal/handler/admin"
 	authHdl "github.com/prast13/bayaraman/internal/handler/auth"
+	chatHdl "github.com/prast13/bayaraman/internal/handler/chat"
 	escrowHdl "github.com/prast13/bayaraman/internal/handler/escrow"
 	userHdl "github.com/prast13/bayaraman/internal/handler/user"
 	walletHdl "github.com/prast13/bayaraman/internal/handler/wallet"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/prast13/bayaraman/config"
+	"github.com/redis/go-redis/v9"
 
 	authMiddleware "github.com/prast13/bayaraman/internal/middleware"
 )
@@ -23,6 +26,9 @@ type RouterParams struct {
 	WebhookHandler *webhookHdl.WebhookHandler
 	EscrowHandler  *escrowHdl.EscrowHandler
 	WalletHandler  *walletHdl.WalletHandler
+	AdminHandler   *adminHdl.AdminHandler
+	ChatHandler    *chatHdl.ChatHandler
+	RedisClient    *redis.Client
 }
 
 func SetupRoutes(p RouterParams) {
@@ -64,8 +70,11 @@ func SetupRoutes(p RouterParams) {
 		escrowGroup.Use(authMiddleware.RequireAuth(p.Config.JWTSecret))
 		escrowGroup.POST("/", p.EscrowHandler.Create)
 		escrowGroup.GET("/", p.EscrowHandler.MyEscrows)
-		escrowGroup.POST("/:id/fund", p.EscrowHandler.Fund)
-		escrowGroup.POST("/:id/complete", p.EscrowHandler.Complete)
+		
+		idemp := authMiddleware.Idempotency(p.RedisClient)
+		
+		escrowGroup.POST("/:id/fund", p.EscrowHandler.Fund, idemp)
+		escrowGroup.POST("/:id/complete", p.EscrowHandler.Complete, idemp)
 		escrowGroup.POST("/:id/videos/packing", p.EscrowHandler.UploadPackingVideo)
 		escrowGroup.POST("/:id/videos/unboxing", p.EscrowHandler.UploadUnboxingVideo)
 		escrowGroup.POST("/:id/photos/packing", p.EscrowHandler.UploadPackingPhoto)
@@ -73,10 +82,34 @@ func SetupRoutes(p RouterParams) {
 		escrowGroup.POST("/:id/receipt", p.EscrowHandler.UploadReceipt)
 		escrowGroup.POST("/:id/deliver", p.EscrowHandler.DeliverEscrow)
 
+		escrowGroup.GET("/:id/chat/history", p.ChatHandler.GetHistory)
+		escrowGroup.POST("/:id/chat/image", p.ChatHandler.UploadImage)
+
 		// Wallet Routes (Protected)
 		walletGroup := api.Group("/wallets")
 		walletGroup.Use(authMiddleware.RequireAuth(p.Config.JWTSecret))
 		walletGroup.GET("/me", p.WalletHandler.GetMyWallet)
-		walletGroup.POST("/withdraw", p.WalletHandler.Withdraw)
+		walletGroup.POST("/withdraw", p.WalletHandler.Withdraw, idemp)
+
+		// Admin Routes (Protected + Role Admin)
+		adminGroup := api.Group("/admin")
+		adminGroup.Use(authMiddleware.RequireAuth(p.Config.JWTSecret))
+		adminGroup.Use(authMiddleware.RequireRole("admin"))
+		
+		adminGroup.GET("/users", p.AdminHandler.GetUsers)
+		adminGroup.GET("/users/:id", p.AdminHandler.GetUserByID)
+		adminGroup.POST("/users/:id/suspend", p.AdminHandler.SuspendUser)
+		
+		adminGroup.POST("/escrows/:id/freeze", p.AdminHandler.FreezeEscrow)
+		adminGroup.POST("/escrows/:id/disputes/override", p.AdminHandler.OverrideDispute)
+		adminGroup.GET("/escrows/:id/timeline", p.AdminHandler.GetEscrowTimeline)
+		
+		adminGroup.POST("/payouts/:id/retry", p.AdminHandler.RetryPayout)
+
+		adminGroup.GET("/configs", p.AdminHandler.GetConfigs)
+		adminGroup.PUT("/configs", p.AdminHandler.UpdateConfig)
+		
+		// Chat WS Route
+		api.GET("/chat/ws", p.ChatHandler.ConnectWS)
 	}
 }

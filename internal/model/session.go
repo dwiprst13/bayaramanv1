@@ -15,6 +15,7 @@ type Session struct {
 	UserAgent    string    `gorm:"type:text" json:"user_agent"`
 	IsRevoked    bool      `gorm:"default:false" json:"is_revoked"`
 	ExpiresAt    time.Time `gorm:"not null" json:"expires_at"`
+	DeviceID     string    `gorm:"type:varchar(255)" json:"device_id"`
 	CreatedAt    time.Time `json:"created_at"`
 
 	User User `gorm:"foreignKey:UserID" json:"user"`

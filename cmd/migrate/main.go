@@ -29,6 +29,7 @@ func main() {
 		&model.Wallet{},
 		&model.WalletTransaction{},
 		&model.Payout{},
+		&model.Message{},
 	)
 
 	if err != nil {

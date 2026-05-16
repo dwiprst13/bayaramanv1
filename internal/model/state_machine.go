@@ -3,11 +3,12 @@ package model
 import "fmt"
 
 var validTransitions = map[string][]string{
-	"pending":   {"funded", "cancelled"},
-	"funded":    {"shipped", "cancelled", "disputed"},
-	"shipped":   {"delivered", "disputed"},
-	"delivered": {"completed", "disputed"},
-	"disputed":  {"completed", "cancelled"},
+	"pending":   {"funded", "cancelled", "frozen"},
+	"funded":    {"shipped", "cancelled", "disputed", "frozen"},
+	"shipped":   {"delivered", "disputed", "frozen"},
+	"delivered": {"completed", "disputed", "frozen"},
+	"disputed":  {"completed", "cancelled", "frozen"},
+	"frozen":    {"cancelled", "completed", "disputed"},
 	"completed": {},
 	"cancelled": {},
 }

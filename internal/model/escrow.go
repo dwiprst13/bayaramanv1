@@ -16,7 +16,7 @@ type EscrowTransaction struct {
 	Description string    `gorm:"type:text" json:"description"`
 	Amount      float64   `gorm:"type:decimal(15,2);not null" json:"amount"`
 	Fee         float64   `gorm:"type:decimal(15,2);not null" json:"fee"`
-	Status            string         `gorm:"type:varchar(20);default:'pending'" json:"status"` // pending, funded, shipped, delivered, disputed, completed, cancelled
+	Status            string         `gorm:"type:varchar(20);default:'pending'" json:"status"` // pending, funded, shipped, delivered, disputed, completed, cancelled, frozen
 	TrackingNumber    string         `gorm:"type:varchar(100)" json:"tracking_number"`
 	Courier           string         `gorm:"type:varchar(50)" json:"courier"`
 	ReceiptPhotoURL   string         `gorm:"type:varchar(255)" json:"receipt_photo_url"`
