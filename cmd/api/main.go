@@ -18,12 +18,13 @@ import (
 	otpSvc "github.com/prast13/bayaraman/internal/service/otp"
 	paymentSvc "github.com/prast13/bayaraman/internal/service/payment"
 	rateLimiterSvc "github.com/prast13/bayaraman/internal/service/ratelimiter"
+	storageSvc "github.com/prast13/bayaraman/internal/service/storage"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/prast13/bayaraman/config"
-
 	"github.com/prast13/bayaraman/internal/router"
+	"github.com/prast13/bayaraman/internal/worker"
 )
 
 func main() {
@@ -56,10 +57,18 @@ func main() {
 	// Services
 	emailService := emailSvc.NewEmailService()
 	rateLimiterService := rateLimiterSvc.NewRateLimiterService(redisClient)
+	
+	// Setup storage base URL
+	baseURL := "http://localhost:8080/uploads"
+	if cfg.Port != "" {
+		baseURL = "http://localhost:" + cfg.Port + "/uploads"
+	}
+	storageService := storageSvc.NewLocalStorageService("./uploads", baseURL)
+
 	otpService := otpSvc.NewOTPService(redisClient, emailService, rateLimiterService)
 	authService := authSvc.NewAuthService(userRepo, sessionRepo, auditLogRepo, otpService, redisClient)
 	paymentService := paymentSvc.NewPaymentService(paymentRepo, escrowRepo, auditLogRepo, cfg.XenditAPIKey)
-	escrowService := escrowSvc.NewEscrowService(escrowRepo, paymentService, auditLogRepo)
+	escrowService := escrowSvc.NewEscrowService(escrowRepo, paymentService, auditLogRepo, storageService)
 
 	// Handlers
 	authHandler := authHdl.NewAuthHandler(authService, cfg.JWTSecret)
@@ -84,6 +93,9 @@ func main() {
 		WebhookHandler: webhookHandler,
 		EscrowHandler:  escrowHandler,
 	})
+
+	// Start Background Worker
+	go worker.StartVideoCleanupWorker(db, storageService)
 
 	// Start server
 	port := cfg.Port

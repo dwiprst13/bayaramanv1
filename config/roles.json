@@ -1,0 +1,136 @@
+{
+  "roles": [
+    {
+      "name": "super_admin",
+      "description": "Akses penuh seluruh sistem",
+      "permissions": [
+        "*"
+      ]
+    },
+    {
+      "name": "admin",
+      "description": "Mengelola operasional escrow",
+      "permissions": [
+        "user.read",
+        "user.suspend",
+        "user.verify",
+
+        "transaction.read",
+        "transaction.update",
+        "transaction.freeze",
+        "transaction.release",
+
+        "dispute.read",
+        "dispute.resolve",
+
+        "kyc.read",
+        "kyc.verify",
+
+        "wallet.read",
+        "wallet.adjust",
+
+        "audit.read"
+      ]
+    },
+    {
+      "name": "fraud_analyst",
+      "description": "Menganalisis fraud dan aktivitas mencurigakan",
+      "permissions": [
+        "user.read",
+        "transaction.read",
+        "transaction.freeze",
+
+        "dispute.read",
+
+        "kyc.read",
+
+        "wallet.read",
+
+        "audit.read",
+        "risk.read",
+        "risk.update"
+      ]
+    },
+    {
+      "name": "customer_support",
+      "description": "Melayani pengguna dan membantu dispute ringan",
+      "permissions": [
+        "user.read",
+
+        "transaction.read",
+
+        "dispute.read",
+        "dispute.comment",
+
+        "ticket.read",
+        "ticket.reply"
+      ]
+    },
+    {
+      "name": "buyer",
+      "description": "Pembeli dalam transaksi escrow",
+      "permissions": [
+        "profile.read",
+        "profile.update",
+
+        "transaction.create",
+        "transaction.read_own",
+        "transaction.cancel_own",
+
+        "payment.pay",
+
+        "dispute.create",
+        "dispute.read_own",
+
+        "kyc.submit",
+
+        "wallet.read_own"
+      ]
+    },
+    {
+      "name": "seller",
+      "description": "Penjual dalam transaksi escrow",
+      "permissions": [
+        "profile.read",
+        "profile.update",
+
+        "transaction.read_own",
+        "transaction.ship",
+
+        "evidence.upload",
+
+        "dispute.read_own",
+        "dispute.reply",
+
+        "wallet.read_own",
+        "wallet.withdraw",
+
+        "kyc.submit"
+      ]
+    },
+    {
+      "name": "verified_seller",
+      "description": "Seller terpercaya dengan privilege tambahan",
+      "permissions": [
+        "profile.read",
+        "profile.update",
+
+        "transaction.read_own",
+        "transaction.ship",
+
+        "evidence.upload",
+
+        "dispute.read_own",
+        "dispute.reply",
+
+        "wallet.read_own",
+        "wallet.withdraw",
+
+        "kyc.submit",
+
+        "fast_release.access",
+        "priority_support.access"
+      ]
+    }
+  ]
+}

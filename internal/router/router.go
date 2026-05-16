@@ -39,6 +39,9 @@ func SetupRoutes(p RouterParams) {
 		webhooks.POST("/xendit", p.WebhookHandler.XenditWebhook)
 	}
 
+	// Static file handler for uploads
+	e.Static("/uploads", "uploads")
+
 	api := e.Group("/api/v1")
 	{
 		// Auth Routes
@@ -55,11 +58,15 @@ func SetupRoutes(p RouterParams) {
 		user.POST("/kyc/initiate", p.UserHandler.InitiateKYC)
 
 		// Escrow Routes (Protected)
-		escrow := api.Group("/escrows")
-		escrow.Use(authMiddleware.RequireAuth(p.Config.JWTSecret))
-		escrow.POST("", p.EscrowHandler.Create)
-		escrow.GET("", p.EscrowHandler.MyEscrows)
-		escrow.POST("/:id/fund", p.EscrowHandler.Fund)
-		escrow.POST("/:id/complete", p.EscrowHandler.Complete)
+		escrowGroup := api.Group("/escrows")
+		escrowGroup.Use(authMiddleware.RequireAuth(p.Config.JWTSecret))
+		escrowGroup.POST("/", p.EscrowHandler.Create)
+		escrowGroup.GET("/", p.EscrowHandler.MyEscrows)
+		escrowGroup.POST("/:id/fund", p.EscrowHandler.Fund)
+		escrowGroup.POST("/:id/complete", p.EscrowHandler.Complete)
+		escrowGroup.POST("/:id/videos/packing", p.EscrowHandler.UploadPackingVideo)
+		escrowGroup.POST("/:id/videos/unboxing", p.EscrowHandler.UploadUnboxingVideo)
+		escrowGroup.POST("/:id/photos/packing", p.EscrowHandler.UploadPackingPhoto)
+		escrowGroup.POST("/:id/photos/unboxing", p.EscrowHandler.UploadUnboxingPhoto)
 	}
 }

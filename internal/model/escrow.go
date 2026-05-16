@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 )
 
@@ -15,9 +16,13 @@ type EscrowTransaction struct {
 	Description string    `gorm:"type:text" json:"description"`
 	Amount      float64   `gorm:"type:decimal(15,2);not null" json:"amount"`
 	Fee         float64   `gorm:"type:decimal(15,2);not null" json:"fee"`
-	Status      string    `gorm:"type:varchar(20);default:'created'" json:"status"` // created, accepted, funded, in_progress, completed, disputed, cancelled
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	Status           string         `gorm:"type:varchar(20);default:'created'" json:"status"` // created, accepted, funded, in_progress, completed, disputed, cancelled
+	PackingVideoURL  string         `gorm:"type:varchar(255)" json:"packing_video_url"`
+	UnboxingVideoURL string         `gorm:"type:varchar(255)" json:"unboxing_video_url"`
+	PackingPhotoURLs  pq.StringArray `gorm:"type:text[]" json:"packing_photo_urls"`
+	UnboxingPhotoURLs pq.StringArray `gorm:"type:text[]" json:"unboxing_photo_urls"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
 
 	Buyer  User `gorm:"foreignKey:BuyerID" json:"buyer"`
 	Seller User `gorm:"foreignKey:SellerID" json:"seller"`
