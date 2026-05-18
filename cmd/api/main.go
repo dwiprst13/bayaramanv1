@@ -121,6 +121,7 @@ func main() {
 	// Start Background Worker
 	go worker.StartVideoCleanupWorker(db, storageService)
 	go worker.StartReconciliationWorker(db)
+	go worker.StartExpiredEscrowWorker(db, configService)
 
 	// Start server
 	port := cfg.Port

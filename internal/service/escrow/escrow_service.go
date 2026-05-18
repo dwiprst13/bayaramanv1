@@ -59,6 +59,21 @@ func NewEscrowService(escrowRepo escrowRepo.EscrowRepository, paymentSvc payment
 	}
 }
 
+func (s *escrowService) checkAndExpire(ctx context.Context, escrow *model.EscrowTransaction) {
+	if escrow.Status != "pending" {
+		return
+	}
+	expiryHours := s.configSvc.GetEscrowExpiryHours(ctx)
+	if time.Now().After(escrow.CreatedAt.Add(time.Duration(expiryHours) * time.Hour)) {
+		escrow.Status = "cancelled"
+		s.escrowRepo.Update(ctx, escrow)
+		s.auditLogRepo.Create(ctx, &model.AuditLog{
+			UserID: escrow.BuyerID,
+			Action: "ESCROW_EXPIRED_SYSTEM",
+		})
+	}
+}
+
 func (s *escrowService) CreateEscrow(ctx context.Context, buyerID uuid.UUID, req CreateEscrowRequest) (*model.EscrowTransaction, error) {
 	if buyerID == req.SellerID {
 		return nil, errors.New("buyer and seller cannot be the same")
@@ -100,6 +115,8 @@ func (s *escrowService) FundEscrow(ctx context.Context, escrowID uuid.UUID, buye
 		return nil, "", errors.New("escrow not found")
 	}
 
+	s.checkAndExpire(ctx, escrow)
+
 	if escrow.BuyerID != buyerID {
 		return nil, "", errors.New("unauthorized")
 	}
@@ -121,6 +138,9 @@ func (s *escrowService) GetMyEscrows(ctx context.Context, userID uuid.UUID, role
 	selling, _ := s.escrowRepo.FindBySellerID(ctx, userID)
 
 	all := append(buying, selling...)
+	for i := range all {
+		s.checkAndExpire(ctx, &all[i])
+	}
 	return all, nil
 }
 
