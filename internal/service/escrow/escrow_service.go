@@ -64,7 +64,8 @@ func (s *escrowService) checkAndExpire(ctx context.Context, escrow *model.Escrow
 		return
 	}
 	expiryHours := s.configSvc.GetEscrowExpiryHours(ctx)
-	if time.Now().After(escrow.CreatedAt.Add(time.Duration(expiryHours) * time.Hour)) {
+	// Tambahkan grace period 15 menit agar pembayaran detik terakhir tidak terpotong sebelum webhook masuk
+	if time.Now().After(escrow.CreatedAt.Add(time.Duration(expiryHours) * time.Hour).Add(15 * time.Minute)) {
 		escrow.Status = "cancelled"
 		s.escrowRepo.Update(ctx, escrow)
 		s.auditLogRepo.Create(ctx, &model.AuditLog{

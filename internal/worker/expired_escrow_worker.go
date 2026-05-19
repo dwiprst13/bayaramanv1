@@ -18,7 +18,8 @@ func StartExpiredEscrowWorker(db *gorm.DB, configService config.ConfigService) {
 
 		ctx := context.Background()
 		expiryHours := configService.GetEscrowExpiryHours(ctx)
-		cutoffTime := time.Now().Add(-time.Duration(expiryHours) * time.Hour)
+		// Tambahkan grace period 15 menit agar webhook yang terlambat masuk tidak balapan dengan worker
+		cutoffTime := time.Now().Add(-time.Duration(expiryHours) * time.Hour).Add(-15 * time.Minute)
 
 		// Update all pending escrows that are older than cutoffTime to cancelled
 		result := db.Table("escrow_transactions").
