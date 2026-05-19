@@ -14,6 +14,8 @@ type ConfigService interface {
 	SetWithdrawDelayHours(ctx context.Context, hours int) error
 	GetEscrowExpiryHours(ctx context.Context) int
 	SetEscrowExpiryHours(ctx context.Context, hours int) error
+	GetAutoReleaseHours(ctx context.Context) int
+	SetAutoReleaseHours(ctx context.Context, hours int) error
 	GetAllConfigs(ctx context.Context) map[string]interface{}
 }
 
@@ -73,10 +75,27 @@ func (s *configService) SetEscrowExpiryHours(ctx context.Context, hours int) err
 	return s.redisClient.Set(ctx, "config:escrow_expiry_hours", hours, 0).Err()
 }
 
+func (s *configService) GetAutoReleaseHours(ctx context.Context) int {
+	val, err := s.redisClient.Get(ctx, "config:auto_release_hours").Result()
+	if err != nil {
+		return 48 // Default 48 hours (2x24 jam)
+	}
+	parsed, err := strconv.Atoi(val)
+	if err != nil {
+		return 48
+	}
+	return parsed
+}
+
+func (s *configService) SetAutoReleaseHours(ctx context.Context, hours int) error {
+	return s.redisClient.Set(ctx, "config:auto_release_hours", hours, 0).Err()
+}
+
 func (s *configService) GetAllConfigs(ctx context.Context) map[string]interface{} {
 	return map[string]interface{}{
 		"platform_fee_percent": s.GetPlatformFeePercent(ctx),
 		"withdraw_delay_hours": s.GetWithdrawDelayHours(ctx),
 		"escrow_expiry_hours":  s.GetEscrowExpiryHours(ctx),
+		"auto_release_hours":   s.GetAutoReleaseHours(ctx),
 	}
 }
