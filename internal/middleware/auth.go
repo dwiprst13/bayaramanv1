@@ -6,9 +6,15 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/prast13/bayaraman/pkg/jwt"
+	"github.com/redis/go-redis/v9"
 )
 
-func RequireAuth(jwtSecret string) echo.MiddlewareFunc {
+func RequireAuth(jwtSecret string, opts ...AuthOption) echo.MiddlewareFunc {
+	cfg := &authConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
 			authHeader := c.Request().Header.Get("Authorization")
@@ -22,6 +28,15 @@ func RequireAuth(jwtSecret string) echo.MiddlewareFunc {
 			}
 
 			tokenString := parts[1]
+
+			// Check if token has been blacklisted (logout)
+			if cfg.redisClient != nil {
+				blacklistKey := "token_blacklist:" + tokenString
+				val, err := cfg.redisClient.Get(c.Request().Context(), blacklistKey).Result()
+				if err == nil && val != "" {
+					return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Token has been revoked"})
+				}
+			}
 
 			claims, err := jwt.ParseToken(tokenString, jwtSecret)
 			if err != nil {
@@ -37,4 +52,16 @@ func RequireAuth(jwtSecret string) echo.MiddlewareFunc {
 	}
 }
 
+// AuthOption configures the RequireAuth middleware.
+type AuthOption func(*authConfig)
 
+type authConfig struct {
+	redisClient *redis.Client
+}
+
+// WithTokenBlacklist enables access token blacklist checking via Redis.
+func WithTokenBlacklist(redisClient *redis.Client) AuthOption {
+	return func(cfg *authConfig) {
+		cfg.redisClient = redisClient
+	}
+}

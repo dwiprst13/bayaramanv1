@@ -2,6 +2,7 @@ package auth
 
 import (
 	"net/http"
+	"strings"
 
 	authSvc "github.com/prast13/bayaraman/internal/service/auth"
 
@@ -105,7 +106,14 @@ func (h *AuthHandler) Logout(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
 	}
 
-	err := h.authService.Logout(c.Request().Context(), req.RefreshToken)
+	// Extract access token from Authorization header for blacklisting
+	accessToken := ""
+	authHeader := c.Request().Header.Get("Authorization")
+	if parts := strings.Split(authHeader, " "); len(parts) == 2 && parts[0] == "Bearer" {
+		accessToken = parts[1]
+	}
+
+	err := h.authService.Logout(c.Request().Context(), req.RefreshToken, accessToken)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}

@@ -62,12 +62,12 @@ func SetupRoutes(p RouterParams) {
 
 		// User Routes (Protected)
 		user := api.Group("/user")
-		user.Use(authMiddleware.RequireAuth(p.Config.JWTSecret))
+		user.Use(authMiddleware.RequireAuth(p.Config.JWTSecret, authMiddleware.WithTokenBlacklist(p.RedisClient)))
 		user.POST("/kyc/initiate", p.UserHandler.InitiateKYC)
 
 		// Escrow Routes (Protected)
 		escrowGroup := api.Group("/escrows")
-		escrowGroup.Use(authMiddleware.RequireAuth(p.Config.JWTSecret))
+		escrowGroup.Use(authMiddleware.RequireAuth(p.Config.JWTSecret, authMiddleware.WithTokenBlacklist(p.RedisClient)))
 		escrowGroup.POST("/", p.EscrowHandler.Create)
 		escrowGroup.GET("/", p.EscrowHandler.MyEscrows)
 		
@@ -87,13 +87,13 @@ func SetupRoutes(p RouterParams) {
 
 		// Wallet Routes (Protected)
 		walletGroup := api.Group("/wallets")
-		walletGroup.Use(authMiddleware.RequireAuth(p.Config.JWTSecret))
+		walletGroup.Use(authMiddleware.RequireAuth(p.Config.JWTSecret, authMiddleware.WithTokenBlacklist(p.RedisClient)))
 		walletGroup.GET("/me", p.WalletHandler.GetMyWallet)
 		walletGroup.POST("/withdraw", p.WalletHandler.Withdraw, idemp)
 
 		// Admin Routes (Protected + Role Admin)
 		adminGroup := api.Group("/admin")
-		adminGroup.Use(authMiddleware.RequireAuth(p.Config.JWTSecret))
+		adminGroup.Use(authMiddleware.RequireAuth(p.Config.JWTSecret, authMiddleware.WithTokenBlacklist(p.RedisClient)))
 		adminGroup.Use(authMiddleware.RequireRole("admin"))
 		
 		adminGroup.GET("/users", p.AdminHandler.GetUsers)
