@@ -10,6 +10,7 @@ import (
 	"github.com/prast13/bayaraman/internal/repository/escrow"
 	"github.com/prast13/bayaraman/internal/repository/user"
 	walletSvc "github.com/prast13/bayaraman/internal/service/wallet"
+	"gorm.io/gorm"
 )
 
 type AdminService interface {
@@ -49,13 +50,13 @@ func (s *adminService) GetUserByID(ctx context.Context, id uuid.UUID) (*model.Us
 }
 
 func (s *adminService) SuspendUser(ctx context.Context, id uuid.UUID, adminID uuid.UUID) error {
-	user, err := s.userRepo.FindByID(ctx, id)
+	u, err := s.userRepo.FindByID(ctx, id)
 	if err != nil {
 		return err
 	}
 
-	user.Status = "suspended"
-	if err := s.userRepo.Update(ctx, user); err != nil {
+	u.Status = "suspended"
+	if err := s.userRepo.Update(ctx, u); err != nil {
 		return err
 	}
 
@@ -67,55 +68,85 @@ func (s *adminService) SuspendUser(ctx context.Context, id uuid.UUID, adminID uu
 }
 
 func (s *adminService) FreezeEscrow(ctx context.Context, escrowID uuid.UUID, adminID uuid.UUID, reason string) error {
-	e, err := s.escrowRepo.FindByID(ctx, escrowID)
-	if err != nil {
-		return err
-	}
+	db := s.escrowRepo.DB()
 
-	if err := model.ValidateTransition(e.Status, "frozen"); err != nil {
-		return err
-	}
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Lock the escrow row to prevent concurrent state changes
+		e, err := s.escrowRepo.FindByIDForUpdate(ctx, tx, escrowID)
+		if err != nil {
+			return err
+		}
 
-	e.Status = "frozen"
-	if err := s.escrowRepo.Update(ctx, e); err != nil {
-		return err
-	}
+		if err := model.ValidateTransition(e.Status, "frozen"); err != nil {
+			return err
+		}
 
-	s.auditLogRepo.Create(ctx, &model.AuditLog{
-		UserID: adminID,
-		Action: "FREEZE_ESCROW_" + escrowID.String() + "_REASON:" + reason,
+		e.Status = "frozen"
+		if err := s.escrowRepo.UpdateWithTx(ctx, tx, e); err != nil {
+			return err
+		}
+
+		s.auditLogRepo.Create(ctx, &model.AuditLog{
+			UserID: adminID,
+			Action: "FREEZE_ESCROW_" + escrowID.String() + "_REASON:" + reason,
+		})
+		return nil
 	})
-	return nil
 }
 
 func (s *adminService) OverrideDispute(ctx context.Context, escrowID uuid.UUID, adminID uuid.UUID, winnerRole string, reason string) error {
-	e, err := s.escrowRepo.FindByID(ctx, escrowID)
+	db := s.escrowRepo.DB()
+
+	var sellerID uuid.UUID
+	var amount float64
+	var title string
+	var escrowIDStr string
+	var shouldCredit bool
+
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Lock the escrow row to prevent concurrent dispute resolution
+		e, err := s.escrowRepo.FindByIDForUpdate(ctx, tx, escrowID)
+		if err != nil {
+			return err
+		}
+
+		if e.Status != "disputed" && e.Status != "frozen" {
+			return errors.New("escrow must be disputed or frozen to override")
+		}
+
+		if winnerRole == "buyer" {
+			e.Status = "cancelled"
+		} else if winnerRole == "seller" {
+			e.Status = "completed"
+			sellerID = e.SellerID
+			amount = e.Amount
+			title = e.Title
+			escrowIDStr = e.ID.String()
+			shouldCredit = true
+		} else {
+			return errors.New("invalid winner role")
+		}
+
+		if err := s.escrowRepo.UpdateWithTx(ctx, tx, e); err != nil {
+			return err
+		}
+
+		s.auditLogRepo.Create(ctx, &model.AuditLog{
+			UserID: adminID,
+			Action: "OVERRIDE_DISPUTE_" + escrowID.String() + "_WINNER:" + winnerRole + "_REASON:" + reason,
+		})
+
+		return nil
+	})
+
 	if err != nil {
 		return err
 	}
 
-	if e.Status != "disputed" && e.Status != "frozen" {
-		return errors.New("escrow must be disputed or frozen to override")
+	// Credit wallet outside the escrow transaction (wallet has its own locking)
+	if shouldCredit {
+		_ = s.walletSvc.CreditWallet(ctx, sellerID, amount, "Dispute Won: "+title, escrowIDStr)
 	}
-
-	if winnerRole == "buyer" {
-		e.Status = "cancelled" // Refund buyer
-	} else if winnerRole == "seller" {
-		e.Status = "completed" // Payout to seller
-		amountToCredit := e.Amount
-		_ = s.walletSvc.CreditWallet(ctx, e.SellerID, amountToCredit, "Dispute Won: "+e.Title, e.ID.String())
-	} else {
-		return errors.New("invalid winner role")
-	}
-
-	if err := s.escrowRepo.Update(ctx, e); err != nil {
-		return err
-	}
-
-	s.auditLogRepo.Create(ctx, &model.AuditLog{
-		UserID: adminID,
-		Action: "OVERRIDE_DISPUTE_" + escrowID.String() + "_WINNER:" + winnerRole + "_REASON:" + reason,
-	})
 
 	return nil
 }

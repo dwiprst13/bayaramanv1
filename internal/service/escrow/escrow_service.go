@@ -17,6 +17,7 @@ import (
 	paymentSvc "github.com/prast13/bayaraman/internal/service/payment"
 	storageSvc "github.com/prast13/bayaraman/internal/service/storage"
 	walletSvc "github.com/prast13/bayaraman/internal/service/wallet"
+	"gorm.io/gorm"
 )
 
 type CreateEscrowRequest struct {
@@ -64,10 +65,14 @@ func (s *escrowService) checkAndExpire(ctx context.Context, escrow *model.Escrow
 		return
 	}
 	expiryHours := s.configSvc.GetEscrowExpiryHours(ctx)
-	// Tambahkan grace period 15 menit agar pembayaran detik terakhir tidak terpotong sebelum webhook masuk
 	if time.Now().After(escrow.CreatedAt.Add(time.Duration(expiryHours) * time.Hour).Add(15 * time.Minute)) {
+		// Use atomic transition to avoid race with webhook funding
+		if err := s.escrowRepo.TransitionStatus(ctx, escrow.ID, "pending", "cancelled"); err != nil {
+			// Another process already changed the status — not an error, just skip
+			log.Printf("[LAZY_EXPIRE] Skipped expiry for escrow %s: %v", escrow.ID, err)
+			return
+		}
 		escrow.Status = "cancelled"
-		s.escrowRepo.Update(ctx, escrow)
 		s.auditLogRepo.Create(ctx, &model.AuditLog{
 			UserID: escrow.BuyerID,
 			Action: "ESCROW_EXPIRED_SYSTEM",
@@ -85,7 +90,7 @@ func (s *escrowService) CreateEscrow(ctx context.Context, buyerID uuid.UUID, req
 	}
 
 	feePercent := s.configSvc.GetPlatformFeePercent(ctx)
-	fee := req.Amount * (feePercent / 100.0) 
+	fee := req.Amount * (feePercent / 100.0)
 
 	escrow := &model.EscrowTransaction{
 		BuyerID:     buyerID,
@@ -146,21 +151,30 @@ func (s *escrowService) GetMyEscrows(ctx context.Context, userID uuid.UUID, role
 }
 
 func (s *escrowService) CompleteEscrow(ctx context.Context, escrowID uuid.UUID, buyerID uuid.UUID) error {
-	escrow, err := s.escrowRepo.FindByID(ctx, escrowID)
-	if err != nil {
-		return errors.New("escrow not found")
-	}
+	db := s.escrowRepo.DB()
 
-	if escrow.BuyerID != buyerID {
-		return errors.New("unauthorized")
-	}
+	var escrow *model.EscrowTransaction
 
-	if err := model.ValidateTransition(escrow.Status, "completed"); err != nil {
-		return err
-	}
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Lock the escrow row to prevent concurrent completion
+		var err error
+		escrow, err = s.escrowRepo.FindByIDForUpdate(ctx, tx, escrowID)
+		if err != nil {
+			return errors.New("escrow not found")
+		}
 
-	escrow.Status = "completed"
-	err = s.escrowRepo.Update(ctx, escrow)
+		if escrow.BuyerID != buyerID {
+			return errors.New("unauthorized")
+		}
+
+		if err := model.ValidateTransition(escrow.Status, "completed"); err != nil {
+			return err
+		}
+
+		escrow.Status = "completed"
+		return s.escrowRepo.UpdateWithTx(ctx, tx, escrow)
+	})
+
 	if err != nil {
 		return err
 	}
@@ -170,10 +184,9 @@ func (s *escrowService) CompleteEscrow(ctx context.Context, escrowID uuid.UUID, 
 		Action: "ESCROW_COMPLETED",
 	})
 
-	// Credit wallet to seller
-	amountToCredit := escrow.Amount // Without fee. Fee belongs to platform.
-	err = s.walletSvc.CreditWallet(ctx, escrow.SellerID, amountToCredit, "Escrow payout for "+escrow.Title, escrow.ID.String())
-	if err != nil {
+	// Credit wallet to seller (outside escrow transaction — wallet has its own locking)
+	amountToCredit := escrow.Amount
+	if err := s.walletSvc.CreditWallet(ctx, escrow.SellerID, amountToCredit, "Escrow payout for "+escrow.Title, escrow.ID.String()); err != nil {
 		log.Printf("[CRITICAL] Failed to credit wallet for escrow %s to user %s: %v", escrow.ID, escrow.SellerID, err)
 	}
 
@@ -183,225 +196,265 @@ func (s *escrowService) CompleteEscrow(ctx context.Context, escrowID uuid.UUID, 
 }
 
 func (s *escrowService) UploadPackingVideo(ctx context.Context, escrowID uuid.UUID, sellerID uuid.UUID, file *multipart.FileHeader) (string, error) {
-	escrow, err := s.escrowRepo.FindByID(ctx, escrowID)
-	if err != nil {
-		return "", errors.New("escrow not found")
-	}
+	db := s.escrowRepo.DB()
+	var url string
 
-	if escrow.SellerID != sellerID {
-		return "", errors.New("unauthorized")
-	}
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		escrow, err := s.escrowRepo.FindByIDForUpdate(ctx, tx, escrowID)
+		if err != nil {
+			return errors.New("escrow not found")
+		}
 
-	if escrow.Status != "funded" && escrow.Status != "in_progress" {
-		return "", errors.New("escrow must be funded or in_progress to upload packing video")
-	}
+		if escrow.SellerID != sellerID {
+			return errors.New("unauthorized")
+		}
 
-	filename := fmt.Sprintf("packing_%s_%s%s", escrow.ID.String(), time.Now().Format("20060102150405"), filepath.Ext(file.Filename))
-	url, err := s.storageSvc.UploadFile(ctx, file, "videos", filename)
-	if err != nil {
-		return "", err
-	}
+		if escrow.Status != "funded" && escrow.Status != "in_progress" {
+			return errors.New("escrow must be funded or in_progress to upload packing video")
+		}
 
-	escrow.PackingVideoURL = url
-	
-	if err := s.escrowRepo.Update(ctx, escrow); err != nil {
-		return "", err
-	}
+		filename := fmt.Sprintf("packing_%s_%s%s", escrow.ID.String(), time.Now().Format("20060102150405"), filepath.Ext(file.Filename))
+		uploadedURL, err := s.storageSvc.UploadFile(ctx, file, "videos", filename)
+		if err != nil {
+			return err
+		}
 
-	s.auditLogRepo.Create(ctx, &model.AuditLog{
-		UserID: sellerID,
-		Action: "UPLOAD_PACKING_VIDEO",
+		escrow.PackingVideoURL = uploadedURL
+		url = uploadedURL
+
+		if err := s.escrowRepo.UpdateWithTx(ctx, tx, escrow); err != nil {
+			return err
+		}
+
+		s.auditLogRepo.Create(ctx, &model.AuditLog{
+			UserID: sellerID,
+			Action: "UPLOAD_PACKING_VIDEO",
+		})
+
+		return nil
 	})
 
-	return url, nil
+	return url, err
 }
 
 func (s *escrowService) UploadUnboxingVideo(ctx context.Context, escrowID uuid.UUID, buyerID uuid.UUID, file *multipart.FileHeader) (string, error) {
-	escrow, err := s.escrowRepo.FindByID(ctx, escrowID)
-	if err != nil {
-		return "", errors.New("escrow not found")
-	}
+	db := s.escrowRepo.DB()
+	var url string
 
-	if escrow.BuyerID != buyerID {
-		return "", errors.New("unauthorized")
-	}
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		escrow, err := s.escrowRepo.FindByIDForUpdate(ctx, tx, escrowID)
+		if err != nil {
+			return errors.New("escrow not found")
+		}
 
-	if escrow.Status != "in_progress" && escrow.Status != "completed" {
-		return "", errors.New("escrow must be in_progress to upload unboxing video")
-	}
+		if escrow.BuyerID != buyerID {
+			return errors.New("unauthorized")
+		}
 
-	filename := fmt.Sprintf("unboxing_%s_%s%s", escrow.ID.String(), time.Now().Format("20060102150405"), filepath.Ext(file.Filename))
-	url, err := s.storageSvc.UploadFile(ctx, file, "videos", filename)
-	if err != nil {
-		return "", err
-	}
+		if escrow.Status != "in_progress" && escrow.Status != "completed" {
+			return errors.New("escrow must be in_progress to upload unboxing video")
+		}
 
-	escrow.UnboxingVideoURL = url
-	
-	if err := s.escrowRepo.Update(ctx, escrow); err != nil {
-		return "", err
-	}
+		filename := fmt.Sprintf("unboxing_%s_%s%s", escrow.ID.String(), time.Now().Format("20060102150405"), filepath.Ext(file.Filename))
+		uploadedURL, err := s.storageSvc.UploadFile(ctx, file, "videos", filename)
+		if err != nil {
+			return err
+		}
 
-	s.auditLogRepo.Create(ctx, &model.AuditLog{
-		UserID: buyerID,
-		Action: "UPLOAD_UNBOXING_VIDEO",
+		escrow.UnboxingVideoURL = uploadedURL
+		url = uploadedURL
+
+		if err := s.escrowRepo.UpdateWithTx(ctx, tx, escrow); err != nil {
+			return err
+		}
+
+		s.auditLogRepo.Create(ctx, &model.AuditLog{
+			UserID: buyerID,
+			Action: "UPLOAD_UNBOXING_VIDEO",
+		})
+
+		return nil
 	})
 
-	return url, nil
+	return url, err
 }
 
 func (s *escrowService) UploadPackingPhoto(ctx context.Context, escrowID uuid.UUID, sellerID uuid.UUID, files []*multipart.FileHeader) ([]string, error) {
-	escrow, err := s.escrowRepo.FindByID(ctx, escrowID)
-	if err != nil {
-		return nil, errors.New("escrow not found")
-	}
-
-	if escrow.SellerID != sellerID {
-		return nil, errors.New("unauthorized")
-	}
-
-	if escrow.Status != "funded" && escrow.Status != "in_progress" {
-		return nil, errors.New("escrow must be funded or in_progress to upload packing photo")
-	}
-
-	if len(files) == 0 {
-		return nil, errors.New("no photos provided")
-	}
-
-	if len(escrow.PackingPhotoURLs)+len(files) > 3 {
-		return nil, errors.New("maximum 3 photos allowed")
-	}
-
+	db := s.escrowRepo.DB()
 	var urls []string
-	for i, file := range files {
-		filename := fmt.Sprintf("packing_photo_%s_%s_%d%s", escrow.ID.String(), time.Now().Format("20060102150405"), i, filepath.Ext(file.Filename))
-		url, err := s.storageSvc.UploadFile(ctx, file, "photos", filename)
+
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		escrow, err := s.escrowRepo.FindByIDForUpdate(ctx, tx, escrowID)
 		if err != nil {
-			return nil, err
+			return errors.New("escrow not found")
 		}
-		urls = append(urls, url)
-	}
 
-	escrow.PackingPhotoURLs = append(escrow.PackingPhotoURLs, urls...)
-	
-	if err := s.escrowRepo.Update(ctx, escrow); err != nil {
-		return nil, err
-	}
+		if escrow.SellerID != sellerID {
+			return errors.New("unauthorized")
+		}
 
-	s.auditLogRepo.Create(ctx, &model.AuditLog{
-		UserID: sellerID,
-		Action: "UPLOAD_PACKING_PHOTO",
+		if escrow.Status != "funded" && escrow.Status != "in_progress" {
+			return errors.New("escrow must be funded or in_progress to upload packing photo")
+		}
+
+		if len(files) == 0 {
+			return errors.New("no photos provided")
+		}
+
+		if len(escrow.PackingPhotoURLs)+len(files) > 3 {
+			return errors.New("maximum 3 photos allowed")
+		}
+
+		for i, file := range files {
+			filename := fmt.Sprintf("packing_photo_%s_%s_%d%s", escrow.ID.String(), time.Now().Format("20060102150405"), i, filepath.Ext(file.Filename))
+			uploadedURL, err := s.storageSvc.UploadFile(ctx, file, "photos", filename)
+			if err != nil {
+				return err
+			}
+			urls = append(urls, uploadedURL)
+		}
+
+		escrow.PackingPhotoURLs = append(escrow.PackingPhotoURLs, urls...)
+
+		if err := s.escrowRepo.UpdateWithTx(ctx, tx, escrow); err != nil {
+			return err
+		}
+
+		s.auditLogRepo.Create(ctx, &model.AuditLog{
+			UserID: sellerID,
+			Action: "UPLOAD_PACKING_PHOTO",
+		})
+
+		return nil
 	})
 
-	return urls, nil
+	return urls, err
 }
 
 func (s *escrowService) UploadUnboxingPhoto(ctx context.Context, escrowID uuid.UUID, buyerID uuid.UUID, files []*multipart.FileHeader) ([]string, error) {
-	escrow, err := s.escrowRepo.FindByID(ctx, escrowID)
-	if err != nil {
-		return nil, errors.New("escrow not found")
-	}
-
-	if escrow.BuyerID != buyerID {
-		return nil, errors.New("unauthorized")
-	}
-
-	if escrow.Status != "in_progress" && escrow.Status != "completed" {
-		return nil, errors.New("escrow must be in_progress to upload unboxing photo")
-	}
-
-	if len(files) == 0 {
-		return nil, errors.New("no photos provided")
-	}
-
-	if len(escrow.UnboxingPhotoURLs)+len(files) > 3 {
-		return nil, errors.New("maximum 3 photos allowed")
-	}
-
+	db := s.escrowRepo.DB()
 	var urls []string
-	for i, file := range files {
-		filename := fmt.Sprintf("unboxing_photo_%s_%s_%d%s", escrow.ID.String(), time.Now().Format("20060102150405"), i, filepath.Ext(file.Filename))
-		url, err := s.storageSvc.UploadFile(ctx, file, "photos", filename)
+
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		escrow, err := s.escrowRepo.FindByIDForUpdate(ctx, tx, escrowID)
 		if err != nil {
-			return nil, err
+			return errors.New("escrow not found")
 		}
-		urls = append(urls, url)
-	}
 
-	escrow.UnboxingPhotoURLs = append(escrow.UnboxingPhotoURLs, urls...)
-	
-	if err := s.escrowRepo.Update(ctx, escrow); err != nil {
-		return nil, err
-	}
+		if escrow.BuyerID != buyerID {
+			return errors.New("unauthorized")
+		}
 
-	s.auditLogRepo.Create(ctx, &model.AuditLog{
-		UserID: buyerID,
-		Action: "UPLOAD_UNBOXING_PHOTO",
+		if escrow.Status != "in_progress" && escrow.Status != "completed" {
+			return errors.New("escrow must be in_progress to upload unboxing photo")
+		}
+
+		if len(files) == 0 {
+			return errors.New("no photos provided")
+		}
+
+		if len(escrow.UnboxingPhotoURLs)+len(files) > 3 {
+			return errors.New("maximum 3 photos allowed")
+		}
+
+		for i, file := range files {
+			filename := fmt.Sprintf("unboxing_photo_%s_%s_%d%s", escrow.ID.String(), time.Now().Format("20060102150405"), i, filepath.Ext(file.Filename))
+			uploadedURL, err := s.storageSvc.UploadFile(ctx, file, "photos", filename)
+			if err != nil {
+				return err
+			}
+			urls = append(urls, uploadedURL)
+		}
+
+		escrow.UnboxingPhotoURLs = append(escrow.UnboxingPhotoURLs, urls...)
+
+		if err := s.escrowRepo.UpdateWithTx(ctx, tx, escrow); err != nil {
+			return err
+		}
+
+		s.auditLogRepo.Create(ctx, &model.AuditLog{
+			UserID: buyerID,
+			Action: "UPLOAD_UNBOXING_PHOTO",
+		})
+
+		return nil
 	})
 
-	return urls, nil
+	return urls, err
 }
 
 func (s *escrowService) UploadReceipt(ctx context.Context, escrowID uuid.UUID, sellerID uuid.UUID, trackingNumber string, courier string, file *multipart.FileHeader) (string, error) {
-	escrow, err := s.escrowRepo.FindByID(ctx, escrowID)
-	if err != nil {
-		return "", errors.New("escrow not found")
-	}
+	db := s.escrowRepo.DB()
+	var url string
 
-	if escrow.SellerID != sellerID {
-		return "", errors.New("unauthorized")
-	}
+	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		escrow, err := s.escrowRepo.FindByIDForUpdate(ctx, tx, escrowID)
+		if err != nil {
+			return errors.New("escrow not found")
+		}
 
-	if err := model.ValidateTransition(escrow.Status, "shipped"); err != nil {
-		return "", err
-	}
+		if escrow.SellerID != sellerID {
+			return errors.New("unauthorized")
+		}
 
-	filename := fmt.Sprintf("receipt_%s_%s%s", escrow.ID.String(), time.Now().Format("20060102150405"), filepath.Ext(file.Filename))
-	url, err := s.storageSvc.UploadFile(ctx, file, "photos", filename)
-	if err != nil {
-		return "", err
-	}
+		if err := model.ValidateTransition(escrow.Status, "shipped"); err != nil {
+			return err
+		}
 
-	escrow.ReceiptPhotoURL = url
-	escrow.TrackingNumber = trackingNumber
-	escrow.Courier = courier
-	escrow.Status = "shipped"
+		filename := fmt.Sprintf("receipt_%s_%s%s", escrow.ID.String(), time.Now().Format("20060102150405"), filepath.Ext(file.Filename))
+		uploadedURL, err := s.storageSvc.UploadFile(ctx, file, "photos", filename)
+		if err != nil {
+			return err
+		}
 
-	if err := s.escrowRepo.Update(ctx, escrow); err != nil {
-		return "", err
-	}
+		escrow.ReceiptPhotoURL = uploadedURL
+		escrow.TrackingNumber = trackingNumber
+		escrow.Courier = courier
+		escrow.Status = "shipped"
+		url = uploadedURL
 
-	s.auditLogRepo.Create(ctx, &model.AuditLog{
-		UserID: sellerID,
-		Action: "UPLOAD_RECEIPT",
+		if err := s.escrowRepo.UpdateWithTx(ctx, tx, escrow); err != nil {
+			return err
+		}
+
+		s.auditLogRepo.Create(ctx, &model.AuditLog{
+			UserID: sellerID,
+			Action: "UPLOAD_RECEIPT",
+		})
+
+		return nil
 	})
 
-	return url, nil
+	return url, err
 }
 
 func (s *escrowService) DeliverEscrow(ctx context.Context, escrowID uuid.UUID, buyerID uuid.UUID) error {
-	escrow, err := s.escrowRepo.FindByID(ctx, escrowID)
-	if err != nil {
-		return errors.New("escrow not found")
-	}
+	db := s.escrowRepo.DB()
 
-	if escrow.BuyerID != buyerID {
-		return errors.New("unauthorized")
-	}
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		escrow, err := s.escrowRepo.FindByIDForUpdate(ctx, tx, escrowID)
+		if err != nil {
+			return errors.New("escrow not found")
+		}
 
-	if err := model.ValidateTransition(escrow.Status, "delivered"); err != nil {
-		return err
-	}
+		if escrow.BuyerID != buyerID {
+			return errors.New("unauthorized")
+		}
 
-	escrow.Status = "delivered"
-	if err := s.escrowRepo.Update(ctx, escrow); err != nil {
-		return err
-	}
+		if err := model.ValidateTransition(escrow.Status, "delivered"); err != nil {
+			return err
+		}
 
-	s.auditLogRepo.Create(ctx, &model.AuditLog{
-		UserID: buyerID,
-		Action: "ESCROW_DELIVERED",
+		escrow.Status = "delivered"
+		if err := s.escrowRepo.UpdateWithTx(ctx, tx, escrow); err != nil {
+			return err
+		}
+
+		s.auditLogRepo.Create(ctx, &model.AuditLog{
+			UserID: buyerID,
+			Action: "ESCROW_DELIVERED",
+		})
+
+		return nil
 	})
-
-	return nil
 }

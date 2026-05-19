@@ -44,7 +44,6 @@ func (s *paymentService) CreateInvoice(ctx context.Context, escrow *model.Escrow
 		log.Printf("[STUB XENDIT] Creating Invoice for Escrow %s. Amount: %.2f\n", escrow.ID.String(), totalAmount)
 		checkoutURL = fmt.Sprintf("https://mock.xendit.co/checkout/%s", invoiceID)
 	} else {
-		// Di sini nantinya implementasi riil Xendit API
 		checkoutURL = fmt.Sprintf("https://checkout.xendit.co/web/%s", invoiceID)
 	}
 
@@ -80,6 +79,7 @@ func (s *paymentService) ProcessWebhook(ctx context.Context, payload map[string]
 		return errors.New("payment not found")
 	}
 
+	// Idempotent: already processed
 	if payment.Status == "paid" {
 		return nil
 	}
@@ -87,18 +87,19 @@ func (s *paymentService) ProcessWebhook(ctx context.Context, payload map[string]
 	if status == "PAID" || status == "SETTLED" {
 		payment.Status = "paid"
 
-		escrow, err := s.escrowRepo.FindByID(ctx, payment.EscrowTransactionID)
-		if err == nil {
-			if err := model.ValidateTransition(escrow.Status, "funded"); err == nil {
-				escrow.Status = "funded"
-				s.escrowRepo.Update(ctx, escrow)
-
+		// Use atomic conditional update to prevent race with expired escrow worker.
+		// If the escrow was already cancelled by the worker, TransitionStatus returns an error
+		// and we simply skip the funding — no data corruption.
+		if err := s.escrowRepo.TransitionStatus(ctx, payment.EscrowTransactionID, "pending", "funded"); err != nil {
+			log.Printf("[WEBHOOK] Could not transition escrow %s to funded (likely already cancelled): %v\n", payment.EscrowTransactionID, err)
+		} else {
+			// Fetch escrow only for audit log (non-critical)
+			escrow, fetchErr := s.escrowRepo.FindByID(ctx, payment.EscrowTransactionID)
+			if fetchErr == nil {
 				s.auditLogRepo.Create(ctx, &model.AuditLog{
 					UserID: escrow.BuyerID,
 					Action: "ESCROW_FUNDED",
 				})
-			} else {
-				log.Printf("Failed to transition escrow %s to funded: %v\n", escrow.ID, err)
 			}
 		}
 	} else if status == "EXPIRED" {
