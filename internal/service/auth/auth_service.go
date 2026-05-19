@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/mail"
 	"strings"
 	"time"
+	"unicode"
 
 	otpSvc "github.com/prast13/bayaraman/internal/service/otp"
 
@@ -19,6 +21,11 @@ import (
 	"github.com/prast13/bayaraman/pkg/hash"
 	"github.com/prast13/bayaraman/pkg/jwt"
 	"github.com/redis/go-redis/v9"
+)
+
+const (
+	minPasswordLength = 8
+	maxPasswordLength = 128
 )
 
 type RegisterRequest struct {
@@ -44,7 +51,8 @@ type AuthService interface {
 	VerifyEmail(ctx context.Context, email string, otp string) error
 	Login(ctx context.Context, req LoginRequest, jwtSecret string) (*LoginResponse, error)
 	Refresh(ctx context.Context, refreshTokenString string, ip string, ua string, jwtSecret string) (*LoginResponse, error)
-	Logout(ctx context.Context, refreshTokenString string) error
+	Logout(ctx context.Context, refreshTokenString string, accessToken string) error
+	IsTokenBlacklisted(ctx context.Context, accessToken string) bool
 }
 
 type authService struct {
@@ -72,6 +80,16 @@ func NewAuthService(
 }
 
 func (s *authService) Register(ctx context.Context, req RegisterRequest) (*model.User, error) {
+	// Validate email format
+	if err := validateEmail(req.Email); err != nil {
+		return nil, err
+	}
+
+	// Validate password strength
+	if err := validatePassword(req.Password); err != nil {
+		return nil, err
+	}
+
 	existingUser, _ := s.userRepo.FindByEmail(ctx, req.Email)
 	if existingUser != nil {
 		return nil, errors.New("email already registered")
@@ -83,7 +101,7 @@ func (s *authService) Register(ctx context.Context, req RegisterRequest) (*model
 	}
 
 	user := &model.User{
-		Email:        req.Email,
+		Email:        strings.ToLower(strings.TrimSpace(req.Email)),
 		PasswordHash: hashedPassword,
 		Role:         "buyer", // Default
 	}
@@ -96,6 +114,52 @@ func (s *authService) Register(ctx context.Context, req RegisterRequest) (*model
 	_ = s.otpSvc.GenerateAndSendOTP(ctx, user.Email)
 
 	return user, nil
+}
+
+// validateEmail checks that the email is well-formed.
+func validateEmail(email string) error {
+	email = strings.TrimSpace(email)
+	if email == "" {
+		return errors.New("email is required")
+	}
+	if _, err := mail.ParseAddress(email); err != nil {
+		return errors.New("invalid email format")
+	}
+	return nil
+}
+
+// validatePassword enforces minimum security requirements.
+func validatePassword(password string) error {
+	if len(password) < minPasswordLength {
+		return fmt.Errorf("password must be at least %d characters", minPasswordLength)
+	}
+	if len(password) > maxPasswordLength {
+		return fmt.Errorf("password must not exceed %d characters", maxPasswordLength)
+	}
+
+	var hasUpper, hasLower, hasDigit bool
+	for _, ch := range password {
+		switch {
+		case unicode.IsUpper(ch):
+			hasUpper = true
+		case unicode.IsLower(ch):
+			hasLower = true
+		case unicode.IsDigit(ch):
+			hasDigit = true
+		}
+	}
+
+	if !hasUpper {
+		return errors.New("password must contain at least one uppercase letter")
+	}
+	if !hasLower {
+		return errors.New("password must contain at least one lowercase letter")
+	}
+	if !hasDigit {
+		return errors.New("password must contain at least one digit")
+	}
+
+	return nil
 }
 
 func (s *authService) VerifyEmail(ctx context.Context, email string, otp string) error {
@@ -245,7 +309,7 @@ func (s *authService) Refresh(ctx context.Context, refreshTokenString string, ip
 	}, nil
 }
 
-func (s *authService) Logout(ctx context.Context, refreshTokenString string) error {
+func (s *authService) Logout(ctx context.Context, refreshTokenString string, accessToken string) error {
 	parts := strings.Split(refreshTokenString, "|")
 	if len(parts) != 2 {
 		return errors.New("invalid refresh token format")
@@ -268,10 +332,24 @@ func (s *authService) Logout(ctx context.Context, refreshTokenString string) err
 	sessionKey := fmt.Sprintf("session:%s", session.ID.String())
 	s.redisClient.Del(ctx, sessionKey)
 
+	// Blacklist the access token so it cannot be used for the remainder of its TTL.
+	// Access tokens live for 15 minutes, so we blacklist for that duration.
+	if accessToken != "" {
+		blacklistKey := fmt.Sprintf("token_blacklist:%s", accessToken)
+		s.redisClient.Set(ctx, blacklistKey, "1", 15*time.Minute)
+	}
+
 	_ = s.auditLogRepo.Create(ctx, &model.AuditLog{
 		UserID: session.UserID,
 		Action: "LOGOUT",
 	})
 
 	return nil
+}
+
+// IsTokenBlacklisted checks if an access token has been revoked via logout.
+func (s *authService) IsTokenBlacklisted(ctx context.Context, accessToken string) bool {
+	blacklistKey := fmt.Sprintf("token_blacklist:%s", accessToken)
+	val, err := s.redisClient.Get(ctx, blacklistKey).Result()
+	return err == nil && val != ""
 }
