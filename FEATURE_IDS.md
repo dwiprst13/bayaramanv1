@@ -5,13 +5,15 @@ Dokumen ini mendata seluruh fitur (*Feature IDs*) yang ada pada sistem backend B
 ## 1. Autentikasi & Otorisasi (AUTH)
 | ID Fitur | Nama Fitur | Deskripsi |
 | :--- | :--- | :--- |
-| **AUT-001** | Registrasi Pengguna | Pendaftaran akun baru. |
+| **AUT-001** | Registrasi Pengguna | Pendaftaran akun baru dengan validasi email (RFC 5322) dan password (min 8 char, uppercase, lowercase, digit). |
 | **AUT-002** | Login Pengguna | Autentikasi pengguna menggunakan email/password untuk mendapatkan JWT. |
 | **AUT-003** | Verifikasi OTP | Pengiriman dan validasi kode OTP (via Email) untuk keamanan ganda. |
-| **AUT-004** | Validasi Token & Akses | Middleware untuk memvalidasi akses endpoint berdasarkan *roles* JWT. |
+| **AUT-004** | Validasi Token & Akses | Middleware untuk memvalidasi akses endpoint berdasarkan *roles* JWT, termasuk pengecekan token blacklist. |
 | **AUT-005** | Refresh Token Rotation | Mekanisme pembaruan token akses secara aman tanpa harus login ulang secara manual. |
 | **AUT-006** | Device Session Management | Manajemen sesi login di berbagai perangkat (melihat dan mencabut sesi aktif). |
 | **AUT-007** | Suspicious Login Detection | Mendeteksi dan memberi notifikasi aktivitas login dari lokasi/perangkat mencurigakan. |
+| **AUT-008** | Access Token Blacklist | Saat logout, access token dimasukkan ke Redis blacklist (TTL 15 menit) sehingga tidak bisa digunakan kembali. |
+| **AUT-009** | Input Validation | Validasi ketat format email dan kekuatan password pada saat registrasi. |
 
 ## 2. Manajemen Pengguna (USER)
 | ID Fitur | Nama Fitur | Deskripsi |
