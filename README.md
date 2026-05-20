@@ -86,8 +86,6 @@ bayaraman/
 │   ├── hash/            # Argon2id password hashing
 │   └── jwt/             # JWT generation & parsing
 ├── FEATURE_IDS.md       # Daftar lengkap fitur dengan ID pelacakan
-├── development_log.txt  # Log perubahan teknis
-└── implementation_plan.md # Blueprint arsitektur
 ```
 
 ---
