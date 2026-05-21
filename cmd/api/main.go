@@ -7,6 +7,7 @@ import (
 	authHdl "github.com/prast13/bayaraman/internal/handler/auth"
 	chatHdl "github.com/prast13/bayaraman/internal/handler/chat"
 	escrowHdl "github.com/prast13/bayaraman/internal/handler/escrow"
+	shippingHdl "github.com/prast13/bayaraman/internal/handler/shipping"
 	userHdl "github.com/prast13/bayaraman/internal/handler/user"
 	walletHdl "github.com/prast13/bayaraman/internal/handler/wallet"
 	webhookHdl "github.com/prast13/bayaraman/internal/handler/webhook"
@@ -15,6 +16,7 @@ import (
 	escrowRepo "github.com/prast13/bayaraman/internal/repository/escrow"
 	paymentRepo "github.com/prast13/bayaraman/internal/repository/payment"
 	sessionRepo "github.com/prast13/bayaraman/internal/repository/session"
+	shipmentRepo "github.com/prast13/bayaraman/internal/repository/shipment"
 	userRepo "github.com/prast13/bayaraman/internal/repository/user"
 	walletRepo "github.com/prast13/bayaraman/internal/repository/wallet"
 	adminSvc "github.com/prast13/bayaraman/internal/service/admin"
@@ -26,6 +28,7 @@ import (
 	otpSvc "github.com/prast13/bayaraman/internal/service/otp"
 	paymentSvc "github.com/prast13/bayaraman/internal/service/payment"
 	rateLimiterSvc "github.com/prast13/bayaraman/internal/service/ratelimiter"
+	shippingSvc "github.com/prast13/bayaraman/internal/service/shipping"
 	storageSvc "github.com/prast13/bayaraman/internal/service/storage"
 	walletSvc "github.com/prast13/bayaraman/internal/service/wallet"
 
@@ -64,11 +67,12 @@ func main() {
 	paymentRepo := paymentRepo.NewPaymentRepository(db)
 	walletRepo := walletRepo.NewWalletRepository(db)
 	chatRepo := chatRepo.NewChatRepository(db)
+	shipmentRepo := shipmentRepo.NewShipmentRepository(db)
 
 	// Services
 	emailService := emailSvc.NewEmailService()
 	rateLimiterService := rateLimiterSvc.NewRateLimiterService(redisClient)
-	
+
 	// Setup storage base URL
 	baseURL := "http://localhost:8080/uploads"
 	if cfg.Port != "" {
@@ -81,9 +85,10 @@ func main() {
 	paymentService := paymentSvc.NewPaymentService(paymentRepo, escrowRepo, auditLogRepo, cfg.XenditAPIKey)
 	walletService := walletSvc.NewWalletService(walletRepo)
 	configService := configSvc.NewConfigService(redisClient)
-	escrowService := escrowSvc.NewEscrowService(escrowRepo, paymentService, auditLogRepo, storageService, walletService, configService)
+	shippingService := shippingSvc.NewShippingService(shipmentRepo, escrowRepo, auditLogRepo, cfg.BiteshipAPIKey)
+	escrowService := escrowSvc.NewEscrowService(escrowRepo, paymentService, auditLogRepo, storageService, walletService, configService, shippingService)
 	adminService := adminSvc.NewAdminService(userRepo, escrowRepo, auditLogRepo, walletService)
-	
+
 	chatHub := chatSvc.NewHub()
 	chatService := chatSvc.NewChatService(chatRepo, escrowRepo, chatHub)
 
@@ -95,6 +100,7 @@ func main() {
 	walletHandler := walletHdl.NewWalletHandler(walletService)
 	adminHandler := adminHdl.NewAdminHandler(adminService, configService)
 	chatHandler := chatHdl.NewChatHandler(chatService, storageService, cfg.JWTSecret)
+	shippingHandler := shippingHdl.NewShippingHandler(shippingService)
 
 	// Setup Echo
 	e := echo.New()
@@ -106,22 +112,24 @@ func main() {
 
 	// Routes
 	router.SetupRoutes(router.RouterParams{
-		Echo:           e,
-		Config:         cfg,
-		AuthHandler:    authHandler,
-		UserHandler:    userHandler,
-		WebhookHandler: webhookHandler,
-		EscrowHandler:  escrowHandler,
-		WalletHandler:  walletHandler,
-		AdminHandler:   adminHandler,
-		ChatHandler:    chatHandler,
-		RedisClient:    redisClient,
+		Echo:            e,
+		Config:          cfg,
+		AuthHandler:     authHandler,
+		UserHandler:     userHandler,
+		WebhookHandler:  webhookHandler,
+		EscrowHandler:   escrowHandler,
+		WalletHandler:   walletHandler,
+		AdminHandler:    adminHandler,
+		ChatHandler:     chatHandler,
+		ShippingHandler: shippingHandler,
+		RedisClient:     redisClient,
 	})
 
-	// Start Background Worker
+	// Start Background Workers
 	go worker.StartVideoCleanupWorker(db, storageService)
 	go worker.StartReconciliationWorker(db)
 	go worker.StartExpiredEscrowWorker(db, configService)
+	go worker.StartShipmentSyncWorker(shippingService)
 
 	// Start server
 	port := cfg.Port

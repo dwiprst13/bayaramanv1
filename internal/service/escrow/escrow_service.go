@@ -15,6 +15,7 @@ import (
 	escrowRepo "github.com/prast13/bayaraman/internal/repository/escrow"
 	configSvc "github.com/prast13/bayaraman/internal/service/config"
 	paymentSvc "github.com/prast13/bayaraman/internal/service/payment"
+	shippingSvc "github.com/prast13/bayaraman/internal/service/shipping"
 	storageSvc "github.com/prast13/bayaraman/internal/service/storage"
 	walletSvc "github.com/prast13/bayaraman/internal/service/wallet"
 	"gorm.io/gorm"
@@ -47,9 +48,10 @@ type escrowService struct {
 	storageSvc   storageSvc.StorageService
 	walletSvc    walletSvc.WalletService
 	configSvc    configSvc.ConfigService
+	shippingSvc  shippingSvc.ShippingService
 }
 
-func NewEscrowService(escrowRepo escrowRepo.EscrowRepository, paymentSvc paymentSvc.PaymentService, auditLogRepo auditLogRepo.AuditLogRepository, storageSvc storageSvc.StorageService, walletSvc walletSvc.WalletService, configSvc configSvc.ConfigService) EscrowService {
+func NewEscrowService(escrowRepo escrowRepo.EscrowRepository, paymentSvc paymentSvc.PaymentService, auditLogRepo auditLogRepo.AuditLogRepository, storageSvc storageSvc.StorageService, walletSvc walletSvc.WalletService, configSvc configSvc.ConfigService, shippingSvc shippingSvc.ShippingService) EscrowService {
 	return &escrowService{
 		escrowRepo:   escrowRepo,
 		paymentSvc:   paymentSvc,
@@ -57,6 +59,7 @@ func NewEscrowService(escrowRepo escrowRepo.EscrowRepository, paymentSvc payment
 		storageSvc:   storageSvc,
 		walletSvc:    walletSvc,
 		configSvc:    configSvc,
+		shippingSvc:  shippingSvc,
 	}
 }
 
@@ -425,7 +428,16 @@ func (s *escrowService) UploadReceipt(ctx context.Context, escrowID uuid.UUID, s
 		return nil
 	})
 
-	return url, err
+	if err != nil {
+		return "", err
+	}
+
+	// Register tracking with shipping aggregator (outside DB transaction)
+	if regErr := s.shippingSvc.RegisterTracking(ctx, escrowID, trackingNumber, courier); regErr != nil {
+		log.Printf("[SHIPPING] Failed to register tracking for escrow %s: %v (non-fatal)\n", escrowID, regErr)
+	}
+
+	return url, nil
 }
 
 func (s *escrowService) DeliverEscrow(ctx context.Context, escrowID uuid.UUID, buyerID uuid.UUID) error {

@@ -18,6 +18,7 @@ type Config struct {
 	PrivyWebhookSecret string `mapstructure:"PRIVY_WEBHOOK_SECRET"`
 	XenditAPIKey       string `mapstructure:"XENDIT_API_KEY"`
 	XenditWebhookToken string `mapstructure:"XENDIT_WEBHOOK_TOKEN"`
+	BiteshipAPIKey     string `mapstructure:"BITESHIP_API_KEY"`
 }
 
 func LoadConfig() (*Config, error) {

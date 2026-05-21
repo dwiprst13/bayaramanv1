@@ -89,3 +89,13 @@ Dokumen ini mendata seluruh fitur (*Feature IDs*) yang ada pada sistem backend B
 | **CFG-001** | Dynamic Platform Fee | Persentase biaya platform disimpan di Redis, dapat diubah admin tanpa restart server. |
 | **CFG-002** | Dynamic Escrow Expiry | Durasi kedaluwarsa escrow (jam) disimpan di Redis, dapat diubah admin tanpa restart server. |
 | **CFG-003** | Admin Config CRUD | Endpoint admin untuk membaca dan memperbarui konfigurasi sistem secara *live*. |
+
+## 11. Pengiriman & Tracking (SHP)
+| ID Fitur | Nama Fitur | Deskripsi |
+| :--- | :--- | :--- |
+| **SHP-001** | Get Shipping Rates | Mengambil daftar ongkos kirim dari berbagai kurir berdasarkan alamat asal, tujuan, dan berat paket (via Biteship). |
+| **SHP-002** | Track Shipment | Melacak status terkini dan riwayat pengiriman berdasarkan nomor resi yang terdaftar pada escrow. |
+| **SHP-003** | Webhook Tracking Update | Menerima notifikasi otomatis dari aggregator (Biteship) saat ada perubahan status pengiriman. Jika status `delivered`, escrow otomatis transisi ke *delivered*. |
+| **SHP-004** | Shipment Status Sync | Pekerja latar (cron job, interval 30 menit) untuk sinkronisasi status pengiriman yang belum diperbarui oleh webhook. |
+| **SHP-005** | Auto Register Tracking | Saat seller upload resi, nomor resi otomatis didaftarkan ke aggregator untuk mengaktifkan webhook tracking. |
+| **SHP-006** | Auto Deliver on Tracking | Ketika webhook aggregator melaporkan paket `delivered`, escrow otomatis berpindah dari `shipped` ke `delivered` (memulai timer Auto Release). |

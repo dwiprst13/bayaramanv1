@@ -7,6 +7,7 @@ import (
 	authHdl "github.com/prast13/bayaraman/internal/handler/auth"
 	chatHdl "github.com/prast13/bayaraman/internal/handler/chat"
 	escrowHdl "github.com/prast13/bayaraman/internal/handler/escrow"
+	shippingHdl "github.com/prast13/bayaraman/internal/handler/shipping"
 	userHdl "github.com/prast13/bayaraman/internal/handler/user"
 	walletHdl "github.com/prast13/bayaraman/internal/handler/wallet"
 	webhookHdl "github.com/prast13/bayaraman/internal/handler/webhook"
@@ -19,16 +20,17 @@ import (
 )
 
 type RouterParams struct {
-	Echo           *echo.Echo
-	Config         *config.Config
-	AuthHandler    *authHdl.AuthHandler
-	UserHandler    *userHdl.UserHandler
-	WebhookHandler *webhookHdl.WebhookHandler
-	EscrowHandler  *escrowHdl.EscrowHandler
-	WalletHandler  *walletHdl.WalletHandler
-	AdminHandler   *adminHdl.AdminHandler
-	ChatHandler    *chatHdl.ChatHandler
-	RedisClient    *redis.Client
+	Echo            *echo.Echo
+	Config          *config.Config
+	AuthHandler     *authHdl.AuthHandler
+	UserHandler     *userHdl.UserHandler
+	WebhookHandler  *webhookHdl.WebhookHandler
+	EscrowHandler   *escrowHdl.EscrowHandler
+	WalletHandler   *walletHdl.WalletHandler
+	AdminHandler    *adminHdl.AdminHandler
+	ChatHandler     *chatHdl.ChatHandler
+	ShippingHandler *shippingHdl.ShippingHandler
+	RedisClient     *redis.Client
 }
 
 func SetupRoutes(p RouterParams) {
@@ -45,6 +47,7 @@ func SetupRoutes(p RouterParams) {
 	{
 		webhooks.POST("/privy", p.WebhookHandler.PrivyWebhook)
 		webhooks.POST("/xendit", p.WebhookHandler.XenditWebhook)
+		webhooks.POST("/shipping", p.ShippingHandler.TrackingWebhook)
 	}
 
 	// Static file handler for uploads
@@ -84,6 +87,14 @@ func SetupRoutes(p RouterParams) {
 
 		escrowGroup.GET("/:id/chat/history", p.ChatHandler.GetHistory)
 		escrowGroup.POST("/:id/chat/image", p.ChatHandler.UploadImage)
+
+		// Shipping tracking (within escrow context)
+		escrowGroup.GET("/:id/shipping/track", p.ShippingHandler.TrackShipment)
+
+		// Shipping Rates (Protected)
+		shippingGroup := api.Group("/shipping")
+		shippingGroup.Use(authMiddleware.RequireAuth(p.Config.JWTSecret, authMiddleware.WithTokenBlacklist(p.RedisClient)))
+		shippingGroup.POST("/rates", p.ShippingHandler.GetRates)
 
 		// Wallet Routes (Protected)
 		walletGroup := api.Group("/wallets")

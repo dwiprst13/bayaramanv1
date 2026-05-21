@@ -25,6 +25,14 @@ Sistem ini menggunakan pendekatan Finite State Machine untuk menangani siklus hi
 - Expired transaction otomatis (lazy expiration + background worker) — [ESC-006](./FEATURE_IDS.md#3-sistem-escrow--rekber-esc)
 - Konfirmasi delivered oleh buyer — [EVI-005](./FEATURE_IDS.md#8-bukti--dokumentasi-transaksi-evi)
 
+### Pengiriman & Tracking
+- Cek ongkir dari berbagai kurir (Biteship aggregator) — [SHP-001](./FEATURE_IDS.md#11-pengiriman--tracking-shp)
+- Tracking pengiriman real-time per escrow — [SHP-002](./FEATURE_IDS.md#11-pengiriman--tracking-shp)
+- Webhook dari aggregator untuk update status otomatis — [SHP-003](./FEATURE_IDS.md#11-pengiriman--tracking-shp)
+- Auto-register resi ke aggregator saat seller upload — [SHP-005](./FEATURE_IDS.md#11-pengiriman--tracking-shp)
+- Auto-deliver escrow saat paket tiba (dari tracking webhook) — [SHP-006](./FEATURE_IDS.md#11-pengiriman--tracking-shp)
+- Cron job sinkronisasi status resi aktif (interval 30 menit) — [SHP-004](./FEATURE_IDS.md#11-pengiriman--tracking-shp)
+
 ### Sistem Dompet (Wallet Ledger)
 - Saldo utama (balance) dan saldo ditahan (held_balance) — [WAL-001](./FEATURE_IDS.md#4-sistem-dompet-internal-wal)
 - Penarikan dana terintegrasi Xendit Disbursements — [WAL-002](./FEATURE_IDS.md#4-sistem-dompet-internal-wal)
@@ -153,6 +161,13 @@ Server berjalan di port yang dikonfigurasi di `.env` (default: 8080).
 | :--- | :--- | :--- |
 | POST | `/webhooks/xendit` | Callback pembayaran Xendit |
 | POST | `/webhooks/privy` | Callback KYC Privy |
+| POST | `/webhooks/shipping` | Callback tracking dari aggregator (Biteship) |
+
+### Shipping (Protected)
+| Method | Path | Deskripsi |
+| :--- | :--- | :--- |
+| POST | `/api/v1/shipping/rates` | Cek ongkir (origin, destination, weight) |
+| GET | `/api/v1/escrows/:id/shipping/track` | Track status pengiriman escrow |
 
 ### Admin (Protected, Role: admin)
 | Method | Path | Deskripsi |
